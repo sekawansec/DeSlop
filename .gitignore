@@ -1,0 +1,53 @@
+# Byte-compiled / optimized
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Test / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Local data and secrets
+.env
+.env.*
+!.env.example
+*.db
+*.sqlite
+*.sqlite3
+data/
+evidence/
+runs/
+
+# Setup wizard / runtime state
+setup.env
+setup.json
+blacklist.json
+
+# Deploy secrets
+deploy/*.local
+deploy/.env
+
+# Playwright / local screenshots (repo root only)
+.playwright-mcp/
+/deslop-*.png
+/page-*.png
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

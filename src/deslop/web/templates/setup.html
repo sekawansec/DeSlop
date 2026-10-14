@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% block title %}DeSlop - Setup{% endblock %}
+{% block container_class %}setup-wrap{% endblock %}
+{% block content %}
+<div class="setup-card">
+  <div class="steps">
+    <span class="step done"></span><span class="step done"></span><span class="step done"></span>
+  </div>
+
+  <h1>Welcome to DeSlop</h1>
+  <p class="lead">One-screen setup. This creates your admin account, a first program, and
+  writes the config. You can fine-tune everything later in
+  <code>{{ config_dir }}</code>.</p>
+
+  <div class="banner info">
+    Database: <strong id="db-state">checking…</strong>
+    <span class="subtle" id="db-detail"></span>
+  </div>
+
+  <form method="post" action="/setup" class="stack">
+    <h3>Admin account</h3>
+    <div class="form-row">
+      <div class="field">
+        <label for="admin_user">Username</label>
+        <input type="text" id="admin_user" name="admin_user" value="admin" required>
+      </div>
+      <div class="field">
+        <label for="admin_password">Password</label>
+        <input type="password" id="admin_password" name="admin_password" required minlength="8"
+               placeholder="min 8 characters">
+      </div>
+    </div>
+
+    <h3>First program</h3>
+    <div class="form-row">
+      <div class="field">
+        <label for="program_name">Program name</label>
+        <input type="text" id="program_name" name="program_name" required
+               placeholder="Acme Bug Bounty">
+      </div>
+      <div class="field">
+        <label for="program_id">Program ID <span class="subtle">(optional slug)</span></label>
+        <input type="text" id="program_id" name="program_id" placeholder="acme">
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="field">
+        <label for="in_scope">In-scope asset</label>
+        <input type="text" id="in_scope" name="in_scope" required placeholder="example.com or *.example.com">
+        <div class="hint">The primary domain/asset researchers may report against.</div>
+      </div>
+      <div class="field">
+        <label for="staging_base_url">Staging base URL</label>
+        <input type="text" id="staging_base_url" name="staging_base_url" required
+               placeholder="https://staging.example.com">
+        <div class="hint">Where DeSlop reproduces reports (never production).</div>
+      </div>
+    </div>
+
+    <label class="row" style="font-weight:500; gap:8px;">
+      <input type="checkbox" name="enable_status_page" value="1" checked style="width:auto">
+      Enable the researcher status page
+    </label>
+
+    <h3>Model &amp; listener</h3>
+    <div class="form-row">
+      <div class="field">
+        <label for="llm_provider">LLM provider</label>
+        <select id="llm_provider" name="llm_provider">
+          <option value="none" selected>none (fully local, no outbound)</option>
+          <option value="ollama">ollama (local model)</option>
+          <option value="openai">openai-compatible</option>
+          <option value="anthropic">anthropic</option>
+        </select>
+        <div class="hint">Used for parsing and drafts, never for proving bugs.</div>
+      </div>
+      <div class="field">
+        <label for="llm_model">Model name</label>
+        <input type="text" id="llm_model" name="llm_model" placeholder="e.g. llama3 / gpt-4o-mini">
+      </div>
+    </div>
+    <div class="field">
+      <label for="oob_base_url">Out-of-band listener URL</label>
+      <input type="text" id="oob_base_url" name="oob_base_url" value="{{ oob_base_url }}">
+      <div class="hint">Used to prove SSRF/blind bugs. The bundled service is usually fine.</div>
+    </div>
+
+    <label class="row" style="font-weight:500; gap:8px;">
+      <input type="checkbox" name="overwrite_program" value="1" style="width:auto">
+      Overwrite the program file if it already exists
+    </label>
+
+    <div class="divider"></div>
+    <button type="submit" class="btn block">Finish setup</button>
+  </form>
+
+  <p class="subtle" style="text-align:center; margin-top:16px;">
+    Prefer the CLI? Run <code>deslop init</code> instead.
+  </p>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+  fetch("/setup/db-check").then(r => r.json()).then(d => {
+    const s = document.getElementById("db-state");
+    const detail = document.getElementById("db-detail");
+    if (d.ok) { s.textContent = "connected"; detail.textContent = "(" + d.dialect + ")"; }
+    else { s.textContent = "error"; detail.textContent = d.error || ""; }
+  }).catch(() => { document.getElementById("db-state").textContent = "unreachable"; });
+</script>
+{% endblock %}

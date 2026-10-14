@@ -1,0 +1,33 @@
+# DeSlop HTTPS reverse proxy (optional profile).
+#
+# Usage:
+#   DESLOP_DOMAIN=vdp.example.com docker compose --profile https up -d
+#
+# Caddy automatically obtains and renews a Let's Encrypt certificate for the
+# domain given in DESLOP_DOMAIN, and proxies to the web app on :8000.
+#
+# For local testing set DESLOP_DOMAIN=localhost (Caddy issues a local cert).
+
+services:
+  caddy:
+    profiles: ["https"]
+    image: caddy:2
+    container_name: deslop-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DESLOP_DOMAIN: ${DESLOP_DOMAIN:-localhost}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - default
+    depends_on:
+      - web
+
+volumes:
+  caddy_data:
+  caddy_config:

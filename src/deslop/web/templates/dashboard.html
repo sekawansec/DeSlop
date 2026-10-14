@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Triage dashboard{% endblock %}
+{% block content %}
+<div class="page-head row" style="justify-content:space-between;">
+  <div>
+    <h1>Triage</h1>
+    <p>{{ total }} report{{ '' if total == 1 else 's' }} · signed in as <strong>{{ triager }}</strong>{% if not can_act %} <span class="badge neutral">read-only</span>{% endif %}</p>
+  </div>
+</div>
+
+<div class="split">
+  <aside class="sidebar">
+    <div class="card">
+      <a class="qitem {{ 'active' if not selected_status else '' }}" href="/dashboard">
+        <span>All reports</span><span class="count">{{ total }}</span>
+      </a>
+      {% for status, items in queues.items() %}
+      <a class="qitem {{ 'active' if selected_status == status else '' }}" href="/dashboard?status={{ status }}">
+        <span>{{ status|replace('_', ' ') }}</span><span class="count">{{ items|length }}</span>
+      </a>
+      {% endfor %}
+    </div>
+  </aside>
+
+  <section>
+    <div class="card">
+      <div class="card-head">
+        <h2>{{ (selected_status|replace('_', ' ')) if selected_status else 'All reports' }}</h2>
+      </div>
+      {% if selected_status and selected %}
+      <table>
+        <thead><tr><th>ID</th><th>Title</th><th>Asset</th><th>Class</th><th>Status</th><th></th></tr></thead>
+        <tbody>
+        {% for r in selected %}
+        <tr>
+          <td class="mono">{{ r.id }}</td>
+          <td>{{ r.title }}</td>
+          <td class="muted">{{ r.asset or "—" }}</td>
+          <td class="muted">{{ r.vuln_class or "—" }}</td>
+          <td><span class="badge neutral plain">{{ r.status|replace('_',' ') }}</span></td>
+          <td class="row end"><a class="btn sm ghost" href="/dashboard/reports/{{ r.id }}">Open</a></td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div class="empty">Select a queue to view reports.</div>
+      {% endif %}
+    </div>
+  </section>
+</div>
+{% endblock %}

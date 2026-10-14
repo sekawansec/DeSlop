@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block title %}Submit a report{% endblock %}
+{% block container_class %}container-narrow{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Submit a vulnerability report</h1>
+  <p>Reports are only accepted with reproduction steps and at least one piece of
+  evidence — a raw HTTP request, a HAR capture, or a runnable PoC. That requirement
+  is the first slop filter: a report we can reproduce is a report we can act on.</p>
+</div>
+
+<form method="post" action="/submit" class="card">
+  <div class="field">
+    <label for="program_id">Program</label>
+    <select id="program_id" name="program_id" required>
+      {% for p in programs %}<option value="{{ p.id }}">{{ p.name }}</option>{% endfor %}
+    </select>
+  </div>
+
+  <div class="field">
+    <label for="title">Title</label>
+    <input type="text" id="title" name="title" required maxlength="300" placeholder="One line describing the bug">
+  </div>
+
+  <div class="form-row">
+    <div class="field">
+      <label for="asset">Target / asset</label>
+      <input type="text" id="asset" name="asset" required placeholder="api.example.com">
+    </div>
+    <div class="field">
+      <label for="endpoint">Endpoint <span class="subtle">(optional)</span></label>
+      <input type="text" id="endpoint" name="endpoint" placeholder="/api/invoices/1001">
+    </div>
+  </div>
+
+  <div class="form-row">
+    <div class="field">
+      <label for="vuln_class">Bug class</label>
+      <input type="text" id="vuln_class" name="vuln_class" required placeholder="IDOR / CWE-639">
+    </div>
+    <div class="field">
+      <label for="claimed_severity">Claimed severity <span class="subtle">(optional)</span></label>
+      <select id="claimed_severity" name="claimed_severity">
+        <option value="">—</option>
+        <option value="critical">critical</option>
+        <option value="high">high</option>
+        <option value="medium">medium</option>
+        <option value="low">low</option>
+        <option value="info">info</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="divider"></div>
+
+  <div class="field">
+    <label for="body">Reproduction steps <span class="badge danger plain">required</span></label>
+    <textarea id="body" name="body" required
+      placeholder="1. Log in as user B&#10;2. Send GET /api/invoices/1001&#10;3. Observe user A's invoice is returned"></textarea>
+  </div>
+
+  <div class="field">
+    <label for="raw_http">Raw HTTP request <span class="badge plain">one evidence field required</span></label>
+    <textarea id="raw_http" name="raw_http"
+      placeholder="GET /api/invoices/1001 HTTP/1.1&#10;Host: api.example.com&#10;Cookie: session=..."></textarea>
+  </div>
+
+  <div class="form-row">
+    <div class="field">
+      <label for="har">HAR contents <span class="subtle">(optional)</span></label>
+      <textarea id="har" name="har" placeholder="{ ... }"></textarea>
+    </div>
+    <div class="field">
+      <label for="poc">Runnable PoC <span class="subtle">(optional)</span></label>
+      <textarea id="poc" name="poc" placeholder="python3 poc.py --target ..."></textarea>
+    </div>
+  </div>
+
+  <div class="divider"></div>
+
+  <div class="form-row">
+    <div class="field">
+      <label for="researcher">Your name <span class="subtle">(optional)</span></label>
+      <input type="text" id="researcher" name="researcher">
+    </div>
+    <div class="field">
+      <label for="researcher_email">Email <span class="subtle">(optional, for status updates)</span></label>
+      <input type="email" id="researcher_email" name="researcher_email">
+    </div>
+  </div>
+
+  <button type="submit">Submit report</button>
+</form>
+{% endblock %}

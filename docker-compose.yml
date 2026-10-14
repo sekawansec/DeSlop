@@ -1,0 +1,71 @@
+# DeSlop - single `docker compose up` deployment.
+#
+#   docker compose up
+#
+# Brings up the Postgres database (with pgvector), the web app (submission form,
+# status page, triage dashboard), and the self-hosted OOB listener.
+#
+# For the intentionally vulnerable lab targets, see lab/docker-compose.yml.
+name: deslop
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: deslop
+      POSTGRES_PASSWORD: deslop
+      POSTGRES_DB: deslop
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U deslop"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  oob:
+    build:
+      context: ./src/deslop/oob
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+
+  web:
+    build: .
+    environment:
+      DESLOP_DATABASE_URL: postgresql+psycopg://deslop:deslop@db:5432/deslop
+      DESLOP_CONFIG_DIR: /app/config/container
+      DESLOP_OOB_BASE_URL: http://oob:8080
+      DESLOP_LLM_PROVIDER: ${DESLOP_LLM_PROVIDER:-none}
+      DESLOP_LLM_MODEL: ${DESLOP_LLM_MODEL:-}
+      DESLOP_DASHBOARD_USER: ${DESLOP_DASHBOARD_USER:-admin}
+      DESLOP_DASHBOARD_PASSWORD_HASH: ${DESLOP_DASHBOARD_PASSWORD_HASH:-}
+      DESLOP_DASHBOARD_USERS_JSON: ${DESLOP_DASHBOARD_USERS_JSON:-}
+      DESLOP_SECRET_KEY: ${DESLOP_SECRET_KEY:-change-me}
+      DESLOP_NOTIFY_ENABLED: ${DESLOP_NOTIFY_ENABLED:-false}
+      DESLOP_SLACK_WEBHOOK_URL: ${DESLOP_SLACK_WEBHOOK_URL:-}
+      DESLOP_TELEGRAM_BOT_TOKEN: ${DESLOP_TELEGRAM_BOT_TOKEN:-}
+      DESLOP_TELEGRAM_CHAT_ID: ${DESLOP_TELEGRAM_CHAT_ID:-}
+      DESLOP_NOTIFY_BASE_URL: ${DESLOP_NOTIFY_BASE_URL:-http://localhost:8000}
+      DESLOP_BLACKLIST_FILE: /app/data/blacklist.json
+      DESLOP_LOG_LEVEL: ${DESLOP_LOG_LEVEL:-INFO}
+      DESLOP_LOG_JSON: ${DESLOP_LOG_JSON:-false}
+    ports:
+      - "8000:8000"
+    volumes:
+      # Program configs. Writable so the in-browser setup wizard can create the
+      # first program. Mount the container-oriented configs read-only under a
+      # subdir for reference.
+      - ./config:/app/config
+      - deslop-data:/app/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  deslop-data:

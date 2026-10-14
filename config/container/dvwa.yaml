@@ -1,0 +1,69 @@
+# DVWA program config for when DeSlop's web app runs inside docker-compose.
+#
+# When the web container runs on the compose network, the host-published DVWA
+# port (14000) is reachable at host.docker.internal:14000. Use this config
+# (via DESLOP_CONFIG_DIR) for containerized deployments.
+id: dvwa
+name: "DVWA Lab (containerized)"
+
+in_scope:
+  - kind: domain
+    value: "host.docker.internal"
+  - kind: domain
+    value: "127.0.0.1"
+
+out_of_scope:
+  - kind: domain
+    value: "dvwa-db"
+
+staging:
+  base_url: "http://host.docker.internal:14000"
+  host_map:
+    "dvwa.lab.test": "host.docker.internal:14000"
+  reset:
+    url: "http://host.docker.internal:14000/setup.php"
+    method: "POST"
+
+test_accounts:
+  - id: admin
+    role: admin
+    tenant: default
+    username: "admin"
+    password: "password"
+  - id: user_a
+    role: user
+    tenant: default
+    username: "gordonb"
+    password: "abc123"
+  - id: user_b
+    role: user
+    tenant: default
+    username: "1337"
+    password: "charley"
+  - id: user_c
+    role: user
+    tenant: default
+    username: "pablo"
+    password: "letmein"
+
+login:
+  kind: form
+  url: "http://host.docker.internal:14000/login.php"
+  method: "POST"
+  username_field: "username"
+  password_field: "password"
+  extra_fields:
+    Login: "Login"
+  csrf_field: "user_token"
+  success_indicator: "logout.php"
+  session_cookie: "PHPSESSID"
+
+status_page:
+  enabled: true
+  token_ttl: "P30D"
+  base_url: "http://localhost:8000"
+
+max_requests_per_run: 50
+allowed_egress_hosts:
+  - "host.docker.internal"
+  - "127.0.0.1"

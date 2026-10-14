@@ -1,0 +1,60 @@
+id: acme-cloud-bounty
+name: Acme Cloud Bounty
+in_scope:
+- kind: domain
+  value: acme.test
+out_of_scope: []
+excluded_classes:
+- id: self-xss
+  match:
+  - self-xss
+  reason: Not accepted.
+- id: missing-security-headers
+  match:
+  - missing header
+  - security headers
+  reason: Not accepted without a demonstrated exploit.
+staging:
+  base_url: https://staging.acme.test
+  host_map: {}
+test_accounts:
+- id: user_a
+  role: user
+  tenant: default
+  username: a@example.com
+  password: REPLACE_ME_A
+- id: user_b
+  role: user
+  tenant: default
+  username: b@example.com
+  password: REPLACE_ME_B
+- id: admin_a
+  role: admin
+  tenant: default
+  username: admin@example.com
+  password: REPLACE_ME_ADMIN
+login:
+  kind: form
+  url: https://staging.example.com/login
+  username_field: email
+  password_field: password
+duplicates:
+  candidate_count: 10
+  similarity_threshold: 0.82
+bounty:
+- severity: critical
+  amount: 5000
+- severity: high
+  amount: 2500
+- severity: medium
+  amount: 800
+- severity: low
+  amount: 250
+replies:
+  language: en
+  received: Thanks, your report was received.
+status_page:
+  enabled: true
+  token_ttl: P90D
+allowed_egress_hosts:
+- acme.test

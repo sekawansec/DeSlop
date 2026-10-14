@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "deslop"
+version = "0.1.0"
+description = "A self-hosted gatekeeper for VDP and bug bounty intake that filters AI slop and proves reports with evidence."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "Apache-2.0 OR AGPL-3.0" }
+authors = [{ name = "Abdullah Mudzakir" }]
+keywords = ["vdp", "bug-bounty", "security", "self-hosted", "triage", "reproduction"]
+classifiers = [
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Security",
+]
+
+[project.scripts]
+deslop = "deslop.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+deslop = ["web/templates/**/*", "web/static/**/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+asyncio_mode = "auto"
+filterwarnings = ["ignore::DeprecationWarning"]
+python_classes = ["Describe*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = [
+    "E501",
+    # FastAPI uses Depends/Form/... in argument defaults by design.
+    "B008",
+]
+
+[tool.mypy]
+python_version = "3.12"
+packages = ["deslop"]
+ignore_missing_imports = true

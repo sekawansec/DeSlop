@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+{% block title %}{{ report.id }}{% endblock %}
+{% block content %}
+<div class="page-head row" style="justify-content:space-between;">
+  <div>
+    <h1>{{ report.title }}</h1>
+    <p class="row">
+      <span class="mono">{{ report.id }}</span>
+      <span class="badge neutral plain">{{ report.status|replace('_',' ') }}</span>
+      <span class="badge info plain">public: {{ report.public_status }}</span>
+    </p>
+  </div>
+  <a class="btn ghost" href="/dashboard">Back</a>
+</div>
+
+{% if triage and triage.injection_flag %}
+<div class="banner danger"><strong>Prompt injection detected.</strong> This report contained instructions aimed at the model. Review carefully.</div>
+{% endif %}
+
+<div class="grid-cards">
+  <div class="card">
+    <h2>Details</h2>
+    <table class="kv">
+      <tr><th>Asset</th><td>{{ report.asset or "—" }}</td></tr>
+      <tr><th>Endpoint</th><td class="mono">{{ report.endpoint or "—" }}</td></tr>
+      <tr><th>Vuln class</th><td>{{ report.vuln_class or "—" }}</td></tr>
+      <tr><th>Claimed severity</th><td>{{ report.claimed_severity or "—" }}</td></tr>
+      <tr><th>Researcher</th><td>{{ report.researcher or "anonymous" }}</td></tr>
+    </table>
+  </div>
+
+  {% if triage %}
+  <div class="card">
+    <h2>Triage result</h2>
+    <table class="kv">
+      <tr><th>Routing</th><td><span class="badge plain">{{ triage.routing_category or "—" }}</span></td></tr>
+      <tr><th>Suggested CVSS</th><td>
+        {% if triage.suggested_cvss %}
+          {{ triage.suggested_cvss.severity }} <strong>{{ triage.suggested_cvss.base_score }}</strong>
+          <div class="subtle mono">{{ triage.suggested_cvss.vector }}</div>
+        {% else %}—{% endif %}
+      </td></tr>
+      <tr><th>Reasoning</th><td class="muted">{{ triage.reasoning or "—" }}</td></tr>
+      <tr><th>Final decision</th><td>{{ triage.final_decision or "—" }}</td></tr>
+    </table>
+  </div>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>Original report</h2>
+  <pre>{{ report.body }}</pre>
+</div>
+
+<div class="card">
+  <h2>Parsed steps</h2>
+  {% if plans %}
+    {% for plan in plans %}
+    <h3>Plan v{{ plan.version }}</h3>
+    <table>
+      <thead><tr><th>#</th><th>Step</th><th>Source sentence</th></tr></thead>
+      <tbody>
+      {% for step in plan.steps %}
+      <tr>
+        <td class="muted">{{ step.index }}</td>
+        <td><code>{{ step.request.method }} {{ step.request.url }}</code>
+          {% if step.as_account %}<span class="badge plain">as {{ step.as_account }}</span>{% endif %}</td>
+        <td class="muted">{{ step.source.quote if step.source else "—" }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <p class="subtle">{{ plan.substitutions|length }} substitution(s)</p>
+    {% endfor %}
+  {% else %}
+  <p class="muted">No parsed plan (the report may not have reached the parser).</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>Runs &amp; evidence</h2>
+  {% if runs %}
+  <table>
+    <thead><tr><th>Run</th><th>Status</th><th>Verdict</th><th>Evidence</th></tr></thead>
+    <tbody>
+    {% for run in runs %}
+    <tr><td class="mono">{{ run.run_id }}</td><td>{{ run.status }}</td>
+        <td>{% if run.verdict %}<span class="badge {{ 'ok' if run.verdict == 'proven' else 'neutral' }} plain">{{ run.verdict }}</span>{% else %}—{% endif %}</td>
+        <td><pre>{{ run.evidence }}</pre></td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">No reproduction runs recorded.</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>Messages</h2>
+  {% for m in messages %}
+  <div class="msg {{ m.direction }}">
+    <div class="meta">{{ m.direction }} · {{ m.sent_by or "—" }} · {{ m.created_at }}</div>
+    <div>{{ m.body }}</div>
+  </div>
+  {% else %}
+  <p class="muted">No messages.</p>
+  {% endfor %}
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <h2>Actions{% if not can_act %} <span class="badge neutral">read-only account</span>{% endif %}</h2>
+  </div>
+  {% if can_act %}
+  <form method="post" action="/dashboard/reports/{{ report.id }}/decision" class="row">
+    <select name="decision" style="width:auto">
+      <option value="accept">accept</option>
+      <option value="reject">reject</option>
+      <option value="duplicate">mark duplicate</option>
+      <option value="request_info">request info</option>
+      <option value="approve_deviation">approve deviations &amp; re-run</option>
+      <option value="approve_production">approve production execution</option>
+    </select>
+    <input type="text" name="reason" placeholder="reason (optional)" style="flex:1; min-width:180px">
+    <button type="submit">Record decision</button>
+  </form>
+  <div class="divider"></div>
+
+  <h3>Reply to researcher</h3>
+  <form method="post" action="/dashboard/reports/{{ report.id }}/reply">
+    <textarea name="body" required placeholder="{{ triage.reply_draft if triage and triage.reply_draft else 'Reply text' }}"></textarea>
+    <p><button type="submit" class="sm">Send reply</button></p>
+  </form>
+
+  <div class="divider"></div>
+  <div class="split" style="grid-template-columns:1fr 1fr; gap:20px;">
+    <div>
+      <h3>Public status</h3>
+      <form method="post" action="/dashboard/reports/{{ report.id }}/public_status" class="row">
+        <select name="public_status" style="flex:1">
+          {% for s in public_statuses %}<option value="{{ s }}">{{ s }}</option>{% endfor %}
+        </select>
+        <button type="submit" class="subtle sm">Update</button>
+      </form>
+    </div>
+    <div>
+      <h3>Retest &amp; token</h3>
+      <div class="row">
+        <form method="post" action="/dashboard/reports/{{ report.id }}/retest">
+          <button type="submit" class="subtle sm">Re-run reproduction</button>
+        </form>
+        <form method="post" action="/dashboard/reports/{{ report.id }}/revoke">
+          <button type="submit" class="danger sm">Revoke status link</button>
+        </form>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="divider"></div>
+  <a class="btn ghost" href="/dashboard/reports/{{ report.id }}/evidence">Download evidence pack</a>
+</div>
+{% endblock %}

@@ -1,0 +1,81 @@
+# Program config for the local DeSlop lab (lab/custom_app + oob).
+# Used by the doctor command and the eval harness. Not a real program.
+id: lab
+name: "DeSlop Lab Program"
+
+in_scope:
+  - kind: wildcard
+    value: "*.lab.test"
+  - kind: domain
+    value: "host.docker.internal"
+  - kind: domain
+    value: "localhost"
+
+out_of_scope:
+  - kind: domain
+    value: "blog.lab.test"
+
+staging:
+  base_url: "http://host.docker.internal:18000"
+  host_map:
+    "api.lab.test": "host.docker.internal:18000"
+    "www.lab.test": "host.docker.internal:18000"
+  reset:
+    url: "http://host.docker.internal:18000/__test__/reset"
+    method: "POST"
+
+test_accounts:
+  - id: user_a
+    role: user
+    tenant: tenant-one
+    username: "alice"
+    password: "alice-pass"
+  - id: user_b
+    role: user
+    tenant: tenant-one
+    username: "bob"
+    password: "bob-pass"
+  - id: user_c_other_tenant
+    role: user
+    tenant: tenant-two
+    username: "carol"
+    password: "carol-pass"
+  - id: admin_a
+    role: admin
+    tenant: tenant-one
+    username: "admin"
+    password: "admin-pass"
+
+login:
+  kind: form
+  url: "http://host.docker.internal:18000/api/login"
+  method: "POST"
+  username_field: "username"
+  password_field: "password"
+  session_cookie: "lab_session"
+
+duplicates:
+  candidate_count: 10
+  similarity_threshold: 0.80
+
+bounty:
+  - severity: critical
+    amount: 5000
+  - severity: high
+    amount: 2000
+  - severity: medium
+    amount: 500
+  - severity: low
+    amount: 100
+
+replies:
+  language: en
+  received: "Thanks, your report was received."
+
+status_page:
+  enabled: true
+  token_ttl: "P30D"
+  base_url: "http://host.docker.internal:8000"
+
+allowed_egress_hosts:
+  - "host.docker.internal"

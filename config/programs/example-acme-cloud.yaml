@@ -1,0 +1,155 @@
+# Example program configuration for a fictional organization: "Acme Cloud".
+# Copy this file, change the values, and drop it in config/programs/.
+# Nothing here is specific to DeSlop itself; it is all policy data.
+
+id: acme-cloud
+name: "Acme Cloud Bug Bounty"
+
+# ---------------------------------------------------------------------------
+# Scope
+# ---------------------------------------------------------------------------
+in_scope:
+  - kind: wildcard
+    value: "*.acme-cloud.test"
+    note: "All customer subdomains"
+  - kind: domain
+    value: "api.acme-cloud.test"
+  - kind: url
+    value: "https://app.acme-cloud.test"
+  - kind: ip_range
+    value: "10.20.0.0/24"
+    note: "Staging only; production ranges are out of scope for automated repro"
+
+out_of_scope:
+  - kind: domain
+    value: "status.acme-cloud.test"
+  - kind: wildcard
+    value: "*.static.acme-cloud.test"
+  - kind: domain
+    value: "blog.acme-cloud.test"
+
+# ---------------------------------------------------------------------------
+# Bug classes we never pay for / do not want
+# ---------------------------------------------------------------------------
+excluded_classes:
+  - id: self-xss
+    match: ["self-xss", "self xss", "selfxss", "CWE-79-self"]
+    reason: "Requires the victim to paste code into their own console."
+  - id: missing-security-headers
+    match: ["missing header", "security headers", "CSP missing", "CWE-693"]
+    reason: "Not accepted without a demonstrated exploit."
+  - id: no-root-detection
+    match: ["root detection", "jailbreak detection", "CWE-919"]
+    reason: "Mobile hardening issue, out of program scope."
+  - id: no-cert-pinning
+    match: ["certificate pinning", "ssl pinning", "CWE-295"]
+    reason: "Not accepted as a standalone finding."
+  - id: public-api-keys
+    match: ["public api key", "public key", "publishable key", "CWE-798-public"]
+    reason: "Keys intended to be public by design."
+
+# ---------------------------------------------------------------------------
+# Staging environment used for reproduction
+# ---------------------------------------------------------------------------
+staging:
+  base_url: "https://staging.acme-cloud.test"
+  host_map:
+    "app.acme-cloud.test": "staging.acme-cloud.test"
+    "api.acme-cloud.test": "staging-api.acme-cloud.test"
+    "www.acme-cloud.test": "staging.acme-cloud.test"
+  reset:
+    url: "https://staging.acme-cloud.test/__test__/reset"
+    method: "POST"
+    auth_header: "X-Test-Reset-Token"
+
+# ---------------------------------------------------------------------------
+# Validator test accounts. Need >=2 with the same role (distinct identities)
+# and at least one with a different role, for IDOR/privilege checks.
+# ---------------------------------------------------------------------------
+test_accounts:
+  - id: user_a
+    role: user
+    tenant: tenant-one
+    username: "validator.a@acme-cloud.test"
+    password: "REPLACE_ME_A"
+  - id: user_b
+    role: user
+    tenant: tenant-one
+    username: "validator.b@acme-cloud.test"
+    password: "REPLACE_ME_B"
+  - id: user_c_other_tenant
+    role: user
+    tenant: tenant-two
+    username: "validator.c@acme-cloud.test"
+    password: "REPLACE_ME_C"
+  - id: admin_a
+    role: admin
+    tenant: tenant-one
+    username: "validator.admin@acme-cloud.test"
+    password: "REPLACE_ME_ADMIN"
+
+login:
+  kind: form
+  url: "https://staging.acme-cloud.test/login"
+  method: "POST"
+  username_field: "email"
+  password_field: "password"
+  otp_field: "otp"
+  success_indicator: "\"token\""
+  session_cookie: "acme_session"
+
+# ---------------------------------------------------------------------------
+# Duplicate detection tuning
+# ---------------------------------------------------------------------------
+duplicates:
+  candidate_count: 10
+  similarity_threshold: 0.82
+  same_asset_boost: 0.08
+  same_endpoint_boost: 0.12
+  auto_duplicate_threshold: 0.95
+
+# ---------------------------------------------------------------------------
+# Bounty table
+# ---------------------------------------------------------------------------
+bounty:
+  - severity: critical
+    amount: 5000
+    currency: USD
+  - severity: high
+    amount: 2500
+    currency: USD
+  - severity: medium
+    amount: 800
+    currency: USD
+  - severity: low
+    amount: 250
+    currency: USD
+  - severity: info
+    amount: 0
+    currency: USD
+    note: "Recognition only."
+
+# ---------------------------------------------------------------------------
+# Reply templates
+# ---------------------------------------------------------------------------
+replies:
+  language: en
+  received: "Thanks for your report. It has been received and will be reviewed."
+  needs_info: "We need a bit more information to reproduce this: {question}"
+  accepted: "Your report has been accepted. We will follow up with next steps."
+  not_accepted: "After review we are unable to accept this report. {reason}"
+  duplicate: "This appears to duplicate an existing report. {reference}"
+  fixed: "The issue you reported has been fixed. Thank you."
+
+# ---------------------------------------------------------------------------
+# Status page
+# ---------------------------------------------------------------------------
+status_page:
+  enabled: true
+  token_ttl: "P90D"
+  base_url: "https://vdp.acme-cloud.test"
+
+max_requests_per_run: 50
+allowed_egress_hosts:
+  - "staging.acme-cloud.test"
+  - "staging-api.acme-cloud.test"

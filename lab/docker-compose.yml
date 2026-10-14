@@ -1,0 +1,95 @@
+# Lab targets and support services for developing/testing DeSlop.
+# These are intentionally vulnerable and MUST run only on an isolated lab
+# network. Do not expose any of these ports to the public internet.
+#
+#   docker compose -f lab/docker-compose.yml up -d
+#
+name: deslop-lab
+
+services:
+  lab-app:
+    build: ./custom_app
+    container_name: deslop-lab-app
+    ports:
+      - "18000:8000"
+    networks:
+      - lab
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8000/healthz')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  oob:
+    build: ../src/deslop/oob
+    container_name: deslop-lab-oob
+    ports:
+      - "18080:8080"
+    networks:
+      - lab
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8080/healthz')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  juice-shop:
+    image: bkimminich/juice-shop:latest
+    container_name: deslop-lab-juice-shop
+    ports:
+      - "13000:3000"
+    networks:
+      - lab
+
+  # DVWA (Damn Vulnerable Web Application) + its MariaDB backend.
+  # DB credentials are passed to DVWA via env (the image reads DB_SERVER,
+  # DB_DATABASE, DB_USER, DB_PASSWORD, DB_PORT) so no config file is mounted.
+  dvwa-db:
+    image: mariadb:10.6
+    container_name: deslop-lab-dvwa-db
+    environment:
+      MARIADB_ROOT_PASSWORD: root
+      MARIADB_DATABASE: dvwa
+      MARIADB_USER: dvwa
+      MARIADB_PASSWORD: "p@ssw0rd"
+    volumes:
+      - dvwa-db:/var/lib/mysql
+    networks:
+      - lab
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  dvwa:
+    image: ghcr.io/digininja/dvwa:latest
+    container_name: deslop-lab-dvwa
+    ports:
+      - "14000:80"
+    environment:
+      DB_SERVER: dvwa-db
+      DB_DATABASE: dvwa
+      DB_USER: dvwa
+      DB_PASSWORD: "p@ssw0rd"
+      DB_PORT: "3306"
+      DEFAULT_SECURITY_LEVEL: low
+      DISABLE_AUTHENTICATION: "false"
+    depends_on:
+      dvwa-db:
+        condition: service_healthy
+    networks:
+      - lab
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/login.php"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+networks:
+  lab:
+    driver: bridge
+
+volumes:
+  dvwa-db:
+

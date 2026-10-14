@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>{% block title %}DeSlop{% endblock %}</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='24' fill='%234f46e5'/><path d='M30 38h40M30 52h28M30 66h34' stroke='white' stroke-width='8' stroke-linecap='round'/></svg>">
+  {% block head %}{% endblock %}
+</head>
+<body>
+  <nav class="nav">
+    <a class="brand" href="/"><span class="dot"></span> DeSlop</a>
+    <a class="item {{ 'active' if active == 'submit' else '' }}" href="/submit">Submit</a>
+    <a class="item {{ 'active' if active == 'dashboard' else '' }}" href="/dashboard">Triage</a>
+    <span class="spacer"></span>
+    <span class="tag">gatekeeper for VDP &amp; bug bounty intake</span>
+  </nav>
+
+  {% if setup_required is not defined or not setup_required %}
+  <div class="{% block container_class %}container{% endblock %}">
+  {% else %}
+  <div>
+  {% endif %}
+    {% block content %}{% endblock %}
+  </div>
+
+  <div id="toast"></div>
+  {% block scripts %}{% endblock %}
+</body>
+</html>
