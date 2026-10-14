@@ -9,7 +9,6 @@ that a human only reviews submissions that already come with evidence.
 > DeSlop makes **recommendations**. Final decisions (accept, reject, bounty)
 > always belong to a human.
 
-Created by **Abdullah Mudzakir**. Open source. To be demoed at Black Hat Arsenal.
 
 ## The problem
 
