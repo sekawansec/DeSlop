@@ -1,50 +1,24 @@
 {% extends "base.html" %}
-{% block title %}DeSlop{% endblock %}
 {% block content %}
-<div class="hero">
-  <h1>Filter the slop. Prove the bugs.</h1>
-  <p>DeSlop is a self-hosted gatekeeper for VDP and bug bounty intake. It filters
-  incoming reports and reproduces them so your team only reviews submissions that
-  already come with evidence.</p>
-  <div class="actions">
-    <a class="btn" href="/submit">Submit a report</a>
-    <a class="btn ghost" href="/dashboard">Open triage</a>
-  </div>
-</div>
+<section class="hero">
+  <h1>Prove the bug, not the prose.</h1>
+  <p class="muted">Every report is replayed and verified before a human decides.</p>
+  <a role="button" href="/submit">Submit a report</a>
+  <a role="button" class="secondary outline" href="/dashboard">Triage</a>
+</section>
 
-<div class="grid-cards">
-  <div class="card">
-    <h2>Programs</h2>
-    {% if programs %}
-      {% for p in programs %}
-      <div class="row" style="justify-content:space-between; padding:6px 0; border-bottom:1px solid var(--border);">
-        <div>
-          <strong>{{ p.name }}</strong>
-          <div class="subtle mono">{{ p.id }}</div>
-        </div>
-        <span class="badge {{ 'ok' if p.status_page.enabled else 'neutral' }}">
-          {{ "status page" if p.status_page.enabled else "no status page" }}
-        </span>
-      </div>
-      {% endfor %}
-    {% else %}
-    <p class="muted">No programs yet. Run the setup or add a YAML file to your config directory.</p>
-    {% endif %}
-  </div>
-
-  <div class="card">
-    <h2>How it works</h2>
-    <ol class="muted" style="margin:0; padding-left:18px;">
-      <li>Reports arrive through the form or an adapter.</li>
-      <li>Scope, excluded classes, duplicates and injection are filtered.</li>
-      <li>Steps are parsed and locked, then replayed in a sandbox.</li>
-      <li>Deterministic verifiers decide whether the bug is proven.</li>
-      <li>A human always makes the final call.</li>
-    </ol>
-  </div>
-</div>
-
-<p class="subtle" style="text-align:center; margin-top:24px;">
-  Recommendations and evidence only — DeSlop never auto-rejects a report.
-</p>
+<section>
+  <h2>Programs</h2>
+  {% if programs %}
+  <table>
+    <tbody>
+    {% for p in programs %}
+    <tr><td>{{ p.name }}</td><td class="mono muted">{{ p.id }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">No programs configured.</p>
+  {% endif %}
+</section>
 {% endblock %}

@@ -135,11 +135,17 @@ def run_setup(
     if program_path.exists() and not overwrite_program:
         notes.append(f"program file {program_path.name} already existed; left unchanged")
     else:
+        from ..config.schema import normalize_host_pattern
+
         program = dict(_PROGRAM_TEMPLATE)
         program["id"] = pid
         program["name"] = program_name
-        scope_entry = {"kind": "domain", "value": in_scope.strip()}
-        program["in_scope"] = [scope_entry]
+        scope_value = normalize_host_pattern(in_scope)
+        if not scope_value:
+            scope_value = "example.com"
+            notes.append("in_scope input had no usable host; wrote example.com — edit the program YAML")
+        scope_kind = "wildcard" if scope_value.startswith("*.") else "domain"
+        program["in_scope"] = [{"kind": scope_kind, "value": scope_value}]
         program["staging"] = {
             "base_url": staging_base_url.strip(),
             "host_map": {},
@@ -148,8 +154,10 @@ def run_setup(
             "enabled": bool(enable_status_page),
             "token_ttl": "P90D",
         }
-        # Keep the target host reachable in the sandbox egress allowlist.
-        program["allowed_egress_hosts"] = [in_scope.strip()]
+        # The egress allowlist covers staging-side infrastructure, derived from
+        # the staging base URL — never the (production) scope hosts.
+        staging_host = normalize_host_pattern(staging_base_url)
+        program["allowed_egress_hosts"] = [staging_host] if staging_host else []
         program_path.write_text(yaml.safe_dump(program, sort_keys=False), encoding="utf-8")
         notes.append(f"wrote program config {program_path}")
         # Validate it parses before declaring success.

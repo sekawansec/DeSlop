@@ -1,52 +1,40 @@
 {% extends "base.html" %}
 {% block title %}Report {{ report.id }}{% endblock %}
-{% block container_class %}container-narrow{% endblock %}
+{% block container_class %}container narrow{% endblock %}
 {% block content %}
-<div class="page-head">
+<hgroup>
   <h1>{{ report.title }}</h1>
-  <p>Report <span class="mono">{{ report.id }}</span></p>
-</div>
+  <p><span class="mono">{{ report.id }}</span> · submitted {{ report.submitted_at|dt }}</p>
+</hgroup>
 
-<div class="card">
-  <table class="kv">
-    <tr><th>Submitted</th><td>{{ report.submitted_at }}</td></tr>
-    <tr><th>Status</th><td>
-      {% set s = report.public_status %}
-      <span class="badge {{ 'ok' if s in ['accepted','fixed'] else 'warn' if s in ['needs_info','under_review'] else 'info' if s == 'duplicate' else 'danger' if s == 'not_accepted' else 'neutral' }} plain">
-        {{ report.status_label }}
-      </span>
-    </td></tr>
-    <tr><th>Last update</th><td>{{ report.last_update or "—" }}</td></tr>
-  </table>
-</div>
+{% if notice %}<p class="note ok">{{ notice }}</p>{% endif %}
 
-{% if can_reply %}
-<div class="card">
-  <h2>We need more information</h2>
-  <p class="muted">Reply with the additional details requested below. Your message
-  is appended to the report and it re-enters the review queue.</p>
-  <form method="post" action="/status/{{ token }}/reply">
-    <div class="field">
-      <textarea id="message" name="message" required placeholder="Your reply, with any attachments described"></textarea>
-    </div>
-    <button type="submit">Send reply</button>
-  </form>
-</div>
-{% endif %}
+<ol class="stepper">
+  {% for s in steps %}<li class="{{ s.state }}">{{ s.label }}</li>{% endfor %}
+</ol>
 
-<div class="card">
+{% set s = report.public_status %}
+<p>
+  <strong class="st {{ 'ok' if s in ['accepted','fixed'] else 'warn' if s in ['needs_info','under_review'] else 'info' if s == 'duplicate' else 'danger' if s == 'not_accepted' else '' }}">{{ report.status_label }}</strong>
+  <span class="muted">· {{ report.status_meaning }}</span>
+</p>
+
+<section>
   <h2>Messages</h2>
   {% for m in messages %}
-  <div class="msg">
-    <div class="meta">{{ m.created_at }}</div>
-    <div>{{ m.body }}</div>
+  <div class="msg {{ 'mine' if m.mine }}">
+    <small>{{ 'You' if m.mine else 'Triage' }} · {{ m.created_at|dt }}</small>
+    <p>{{ m.body }}</p>
   </div>
   {% else %}
   <p class="muted">No messages yet.</p>
   {% endfor %}
-</div>
 
-<p class="subtle" style="text-align:center;">
-  This page shows only your report's public status. Internal triage details are never displayed here.
-</p>
+  {% if can_reply %}
+  <form method="post" action="/status/{{ token }}/reply">
+    <textarea name="message" rows="5" required aria-label="Reply"></textarea>
+    <button type="submit">Send reply</button>
+  </form>
+  {% endif %}
+</section>
 {% endblock %}

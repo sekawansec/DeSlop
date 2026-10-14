@@ -58,6 +58,14 @@ duplicates:
   candidate_count: 10
   similarity_threshold: 0.80
 
+# Canary planted in the lab app (profile of user alice). For IDOR-class claims
+# the token is added to the verifier's ownership markers, and reports that never
+# surface it get a reviewer note.
+canary:
+  enabled: true
+  token: "CANARY-LAB-D3SL0P-7f2a"
+  required_for: ["idor"]
+
 bounty:
   - severity: critical
     amount: 5000

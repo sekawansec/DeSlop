@@ -24,6 +24,7 @@ from ..parser.step_parser import ParseOutcome, StepParser, canonical_bug_class
 from ..recipes.registry import get_recipe
 from ..repro.executor import WebExecutor
 from ..repro.interfaces import ExecutionResult, VerificationResult
+from ..repro.scope import check_scope
 from ..repro.substitution import SubstitutionResult, apply_substitutions
 from ..repro.validator import ValidationResult, validate_plan
 from ..security.injection import InjectionReport, detect_injection
@@ -47,6 +48,8 @@ class PipelineResult:
     duplicate_candidates: list = field(default_factory=list)
     cvss: dict | None = None
     notes: list[str] = field(default_factory=list)
+    evidence_gaps: list[str] = field(default_factory=list)
+    production_gate: bool = False
 
     def to_dict(self) -> dict:
         return {
@@ -61,6 +64,8 @@ class PipelineResult:
             "verdict": self.verification.verdict.value if self.verification else None,
             "cvss": self.cvss,
             "notes": self.notes,
+            "evidence_gaps": self.evidence_gaps,
+            "production_gate": self.production_gate,
         }
 
 
@@ -82,8 +87,29 @@ class Pipeline:
         self.executor = executor or WebExecutor(self.settings)
         self.duplicate_corpus = duplicate_corpus or []
 
+    def _reset_staging(self, result: PipelineResult) -> None:
+        """Call the program's configured staging reset endpoint, if any."""
+        reset = self.program.staging.reset
+        if reset is None or not reset.url:
+            return
+        import httpx
+
+        try:
+            headers = {reset.auth_header: "deslop"} if reset.auth_header else {}
+            with httpx.Client(timeout=10.0) as client:
+                r = client.request(reset.method, reset.url, headers=headers)
+            if r.status_code >= 400:
+                result.notes.append(f"staging reset returned HTTP {r.status_code}")
+        except httpx.HTTPError as exc:
+            result.notes.append(f"staging reset failed: {type(exc).__name__}")
+
     def _duplicate_check(self, result, plan):  # noqa: ANN001
-        """Run retrieval + judgement against the corpus; True if duplicate."""
+        """Run retrieval + judgement against the corpus; True if duplicate.
+
+        Candidates found by the earlier metadata check are kept — this check
+        uses a plan-derived summary and only *adds* candidates, never removes
+        the ones already surfaced to the triager.
+        """
         if not self.duplicate_corpus:
             return False
         from ..llm.embeddings import HashingEmbedder
@@ -103,8 +129,9 @@ class Pipeline:
         candidates = retrieve_candidates(target, self.duplicate_corpus, self.program.duplicates)
         lookup = {n.report_id: n for n in self.duplicate_corpus}
         judge_candidates(target, candidates, lookup, self.program, self.client)
-        result.duplicate_candidates = candidates
-        category, reason = classify_for_routing(candidates)
+        seen = {c.report_id for c in result.duplicate_candidates}
+        result.duplicate_candidates.extend(c for c in candidates if c.report_id not in seen)
+        category, reason = classify_for_routing(result.duplicate_candidates)
         if category == "duplicate":
             result.routing = RoutingDecision(category, reason)
             result.status = ReportStatus.DUPLICATE.value
@@ -145,12 +172,19 @@ class Pipeline:
         endpoint: str | None = None,
         vuln_class: str | None = None,
         run_id: str | None = None,
+        production_approved: bool = False,
+        evidence_blobs: list[str] | None = None,
     ) -> PipelineResult:
         run_id = run_id or uuid.uuid4().hex
         result = PipelineResult(run_id=run_id, status=ReportStatus.FILTERING.value)
 
-        # 1. Injection detection (deterministic).
-        result.injection = detect_injection(body, extra_hosts=_out_of_scope_hosts(self.program))
+        # 1. Injection detection (deterministic). Instructions to fetch an
+        # in-scope host are normal reproduction steps, not injection.
+        result.injection = detect_injection(
+            body,
+            extra_hosts=_out_of_scope_hosts(self.program),
+            in_scope=lambda h: check_scope(h, self.program).allowed,
+        )
 
         # 2. Scope check.
         result.scope = check_scope_for_report(asset, endpoint, self.program)
@@ -165,6 +199,19 @@ class Pipeline:
             result.routing = RoutingDecision(result.excluded.category, result.excluded.reason)
             result.status = ReportStatus.EXCLUDED_CLASS.value
             return result
+
+        # 3b. Evidence checklist: deterministic per-class gaps become reviewer
+        #     notes and needs_info questions — never an auto-reject.
+        from ..intake.evidence import evidence_gaps as _evidence_gaps
+
+        canon_declared = canonical_bug_class(vuln_class)
+        blob = body + "\n" + "\n".join(evidence_blobs or [])
+        result.evidence_gaps = [
+            g.question
+            for g in _evidence_gaps(
+                canon_declared, blob, program_requirements=self.program.evidence_requirements
+            )
+        ]
 
         # 4. Prompt injection -> blocked_by_policy (human decides).
         if result.injection.flagged:
@@ -204,7 +251,8 @@ class Pipeline:
             return result
 
         # 6. Recipe availability.
-        if get_recipe(plan.bug_class) is None:
+        recipe = get_recipe(plan.bug_class)
+        if recipe is None:
             result.routing = route_no_recipe(plan.bug_class)
             result.status = ReportStatus.MANUAL_REPRODUCTION_REQUIRED.value
             return result
@@ -219,23 +267,95 @@ class Pipeline:
             result.status = ReportStatus.BLOCKED_BY_POLICY.value
             return result
 
-        # 8. Substitutions (host rewrites + credential/dynamic recording).
+        # 8. Recipe state setup: per-run tokens (SSRF), ownership markers (IDOR),
+        #    and any program-side seeding the recipe needs. Runs before
+        #    substitution so generated tokens can be embedded into the plan.
+        setup_data: dict = {}
+        try:
+            setup = recipe.setup(self.program, run_id=run_id)
+            setup_data = dict(setup.data or {})
+            if not setup.ok:
+                result.notes.append(f"recipe setup reported: {setup.detail}")
+        except Exception as exc:  # noqa: BLE001 - setup failure is not fatal
+            result.notes.append(f"recipe setup failed: {type(exc).__name__}: {exc}")
+
+        # Canary check: for bug classes where a planted canary is the expected
+        # proof, note when the report never mentions it (the verifier still
+        # checks responses; this flag is for the human reviewer).
+        canary = self.program.canary
+        if canary and canary.enabled and canary.token:
+            setup_data.setdefault("canary", canary.token)
+            if plan.bug_class in canary.required_for and canary.token not in body:
+                for blob in evidence_blobs or []:
+                    if canary.token in blob:
+                        break
+                else:
+                    result.notes.append(
+                        "report does not contain the program canary token required "
+                        f"for {plan.bug_class!r} claims"
+                    )
+
+        # 9. Substitutions (host rewrites + credential/dynamic recording + OOB
+        #    token embedding).
         result.substitutions = apply_substitutions(
-            plan, self.program, oob_base_url=self.settings.oob_base_url
+            plan,
+            self.program,
+            oob_base_url=self.settings.oob_base_url,
+            run_token=setup_data.get("run_token"),
         )
         exec_plan = plan.model_copy(update={"steps": result.substitutions.steps})
 
-        # 9. Execute.
+        # 10. Egress gate: every post-substitution step host must be reachable
+        #     by sandbox policy. In-scope production hosts require explicit
+        #     approval (settings.allow_production, program.allow_production, or
+        #     a per-report approve_production decision).
+        from ..sandbox.policy import build_egress_policy, host_of
+
+        approved = (
+            production_approved or self.settings.allow_production or self.program.allow_production
+        )
+        egress = build_egress_policy(
+            self.program, self.settings.oob_base_url, production_approved=approved
+        )
+        denied_hosts = sorted(
+            {host_of(s.request.url) for s in exec_plan.steps if not egress.permits(host_of(s.request.url))}
+            - {""}
+        )
+        if denied_hosts:
+            if any(egress.is_production(h) for h in denied_hosts):
+                result.production_gate = True
+                result.routing = RoutingDecision(
+                    RoutingCategory.NEEDS_HUMAN_REVIEW.value,
+                    "plan targets production host(s) "
+                    f"{', '.join(denied_hosts)}; reproduction requires an "
+                    "approve_production decision",
+                )
+            else:
+                result.routing = RoutingDecision(
+                    RoutingCategory.BLOCKED_BY_POLICY.value,
+                    f"egress denied to host(s): {', '.join(denied_hosts)}",
+                )
+                result.status = ReportStatus.BLOCKED_BY_POLICY.value
+                return result
+            result.status = ReportStatus.NEEDS_HUMAN_REVIEW.value
+            return result
+
+        # 11. Optional staging reset so the run starts from a clean state.
+        self._reset_staging(result)
+
+        # 12. Execute.
         result.status = ReportStatus.REPRODUCING.value
-        result.execution = self.executor.execute(exec_plan, self.program, run_id=run_id)
+        result.execution = self.executor.execute(
+            exec_plan, self.program, run_id=run_id, egress=egress
+        )
 
-        # 10. Verify with the recipe's deterministic verifier.
+        # 13. Verify with the recipe's deterministic verifier.
         result.status = ReportStatus.VERIFYING.value
-        recipe = get_recipe(plan.bug_class)
-        assert recipe is not None
-        result.verification = recipe.verify(exec_plan, result.execution, self.program)
+        result.verification = recipe.verify(
+            exec_plan, result.execution, self.program, setup_data=setup_data
+        )
 
-        # 11. Route.
+        # 14. Route.
         result.routing = route_verdict(
             result.verification.verdict, bug_class=plan.bug_class
         )

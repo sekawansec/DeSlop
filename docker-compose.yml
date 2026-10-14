@@ -37,7 +37,11 @@ services:
     environment:
       DESLOP_DATABASE_URL: postgresql+psycopg://deslop:deslop@db:5432/deslop
       DESLOP_CONFIG_DIR: /app/config/container
-      DESLOP_OOB_BASE_URL: http://oob:8080
+      # OOB listener base URL used for both callback rewrites and verification
+      # polls. To verify SSRF against lab targets on a different compose
+      # network, point both sides at a shared listener, e.g.
+      # DESLOP_OOB_BASE_URL=http://host.docker.internal:8080
+      DESLOP_OOB_BASE_URL: ${DESLOP_OOB_BASE_URL:-http://oob:8080}
       DESLOP_LLM_PROVIDER: ${DESLOP_LLM_PROVIDER:-none}
       DESLOP_LLM_MODEL: ${DESLOP_LLM_MODEL:-}
       DESLOP_DASHBOARD_USER: ${DESLOP_DASHBOARD_USER:-admin}

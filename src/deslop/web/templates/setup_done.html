@@ -1,40 +1,18 @@
 {% extends "base.html" %}
 {% block title %}DeSlop - Setup complete{% endblock %}
-{% block container_class %}setup-wrap{% endblock %}
+{% block container_class %}container narrow{% endblock %}
 {% block content %}
-<div class="setup-card">
-  <div class="steps">
-    <span class="step done"></span><span class="step done"></span><span class="step done"></span>
-  </div>
-  <div class="banner ok">Setup complete. DeSlop is ready.</div>
+<hgroup>
+  <h1>Setup complete</h1>
+  <p>Admin: {{ state.admin_user or "admin" }}{% if state.programs %} · programs: <span class="mono">{{ state.programs|join(', ') }}</span>{% endif %}</p>
+</hgroup>
 
-  <h1>You're all set</h1>
-  <p class="lead">Signed in as <strong>{{ state.admin_user or "admin" }}</strong>.
-  Your configuration lives in the project's config directory.</p>
+{% if state.notes %}
+<ul class="muted">{% for n in state.notes %}<li><small>{{ n }}</small></li>{% endfor %}</ul>
+{% endif %}
 
-  {% if state.programs %}
-  <div class="card flat">
-    <h2>Programs</h2>
-    {% for p in state.programs %}<span class="badge plain">{{ p }}</span> {% endfor %}
-  </div>
-  {% endif %}
+<a role="button" href="/dashboard">Open triage</a>
+<a role="button" class="secondary outline" href="/submit">Submission form</a>
 
-  {% if state.notes %}
-  <div class="card flat">
-    <h2>Notes</h2>
-    <ul class="muted">{% for n in state.notes %}<li>{{ n }}</li>{% endfor %}</ul>
-  </div>
-  {% endif %}
-
-  <div class="grid-cards">
-    <a class="btn" href="/dashboard">Open the triage dashboard</a>
-    <a class="btn ghost" href="/submit">View the submission form</a>
-  </div>
-
-  <div class="banner info" style="margin-top:20px;">
-    Tip: edit your program (scope, test accounts, bounty table) in the generated
-    YAML file. Re-run <code>deslop doctor &lt;program&gt;</code> to verify staging
-    connectivity before reproducing.
-  </div>
-</div>
+<p class="muted" style="margin-top:2rem"><small>Run <code>deslop doctor &lt;program&gt;</code> to check staging connectivity.</small></p>
 {% endblock %}

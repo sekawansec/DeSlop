@@ -36,15 +36,18 @@ deterministic verifier decides whether the bug is real.
 
 ```mermaid
 flowchart LR
-    A[Intake form / adapter] --> B[Filtering: scope, excluded, injection]
+    A[Intake: evidence + attestation required] --> B[Filtering: scope, excluded, injection, dedup]
     B --> C[Parsing: LLM to locked steps]
     C --> D[Validator: deterministic policy]
     D -->|reject| X[blocked_by_policy]
-    D -->|ok| E[Executor: sandbox, staging]
-    E --> F[Verifier: per bug class]
-    F --> G[Routing: categorize + queue]
-    G --> H[Triage dashboard: human decides]
-    H --> I[Retest after a fix]
+    D -->|ok| S[Recipe setup: tokens, markers, reset]
+    S --> E{Egress gate}
+    E -->|production, unapproved| HR[needs_human_review]
+    E -->|allowed| F[Executor: sandbox, staging]
+    F --> G[Verifier: per bug class]
+    G --> H[Routing: categorize + queue]
+    H --> I[Triage dashboard: human decides]
+    I --> J[Retest after a fix]
 ```
 
 Key separations:
@@ -105,6 +108,16 @@ deslop retest <program> <report_id>             # re-run reproduction after a fi
 
 ## Operational features
 
+- **Structured intake** — the submission form requires reproduction steps plus
+  at least one technical artifact (raw HTTP request, HAR, or PoC), a
+  self-reproduction attestation, and an optional AI-assistance disclosure. A
+  deterministic per-class evidence checklist (e.g. SSRF → OOB callback, IDOR →
+  two accounts) turns gaps into follow-up questions for the researcher.
+- **Production gate** — plans targeting in-scope production hosts (not mapped to
+  staging) stop at `needs_human_review` until a triager records
+  `approve_production`; nothing is sent before that.
+- **Program canary** — plant a unique token in staging and mark bug classes that
+  should surface it; a missing canary is flagged to the reviewer.
 - **First-run setup wizard** — configure admin account, first program, and
   model/listener from the browser. No manual `.env` editing.
 - **One-command CLI setup** — `deslop init` writes a `.env` with strong secrets.
@@ -131,7 +144,11 @@ deslop retest <program> <report_id>             # re-run reproduction after a fi
   `none`.
 - **Per-program YAML** (`config/programs/*.yaml`): scope, excluded classes,
   staging host map, test accounts, bounty table, reply templates, status-page
-  settings. See `config/programs/example-acme-cloud.yaml`.
+  settings, `allowed_egress_hosts`, `allow_production`, `canary`, and
+  `evidence_requirements`. Scope and egress entries accept URLs or
+  `*.domain` globs — they are normalized to host patterns at load
+  (`*.example.com` covers subdomains only; list the apex as a separate
+  `domain` entry). See `config/programs/example-acme-cloud.yaml`.
 
 ## Recipes and verifiers (v1)
 
@@ -191,6 +208,7 @@ src/deslop/
   llm/        provider abstraction, embeddings, prompts, validated client
   parser/     LLM step parser + offline raw-HTTP parser
   repro/      step model, scope, validator, substitution, web executor
+  intake/     per-class evidence checklist (deterministic gap detection)
   recipes/    recipe/verifier plugins (IDOR, XSS, SSRF, open redirect)
   pipeline/   orchestrator, filters, routing, retest
   dedup/      normalization, retrieval, judgement
@@ -206,9 +224,12 @@ docs/         architecture, setup, threat model
 
 Report content is **untrusted input**. It is delimited in prompts, treated as
 data, and scanned for prompt injection. The sandbox is a single-use container
-with egress restricted to in-scope staging hosts and the OOB listener. Credentials
-are redacted from logs and evidence packs. Reproduction against production
-requires manual approval per report. See `docs/threat-model.md`.
+with egress restricted to in-scope staging hosts and the OOB listener — the same
+allowlist is enforced per-request by the executor. Credentials
+are redacted from logs and evidence packs. Reproduction against in-scope
+production hosts requires explicit approval (env flag, program flag, or a
+per-report `approve_production` decision) and is gated before any request is
+sent. See `docs/threat-model.md`.
 
 ## Limitations
 

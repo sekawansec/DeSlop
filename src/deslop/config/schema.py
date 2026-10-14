@@ -8,12 +8,48 @@ from __future__ import annotations
 
 from datetime import timedelta
 from typing import Annotated, Literal
+from urllib.parse import urlparse
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 Severity = Literal["critical", "high", "medium", "low", "info"]
 
 ScopeKind = Literal["domain", "wildcard", "ip_range", "app_id", "url"]
+
+
+def normalize_host_pattern(value: str) -> str:
+    """Reduce a scope/egress value to a bare host pattern.
+
+    Operators habitually paste URL-ish values such as ``https://*.example.com/*``
+    or ``api.example.com/path``. Matching happens on hosts, so the scheme, port,
+    path, and a leading ``*.`` glob marker are preserved semantically: the return
+    value is either ``*.<domain>``, a bare host/IP, or a CIDR (untouched).
+    """
+    v = value.strip().strip(".")
+    if "://" in v:
+        parsed = urlparse(v)
+        host = parsed.hostname or ""
+        v = host
+        # ``*.example.com`` survives hostname parsing; keep the marker below.
+        raw = parsed.netloc.split("@")[-1]
+        if raw.startswith("*."):
+            v = "*." + v.lstrip("*.")
+    else:
+        v = v.split("/", 1)[0]
+        if ":" in v and v.count(":") == 1:
+            v = v.split(":", 1)[0]
+    return v.lower().strip(".")
+
+
+def _netloc_of(value: str) -> str:
+    """Like :func:`normalize_host_pattern` but preserves an explicit port."""
+    v = value.strip()
+    if "://" in v:
+        parts = urlparse(v)
+        host = (parts.hostname or "").lstrip("*.")
+        return host if parts.port is None else f"{host}:{parts.port}"
+    v = v.split("/", 1)[0]
+    return v.lower().strip(".")
 
 
 class ScopeEntry(BaseModel):
@@ -30,6 +66,32 @@ class ScopeEntry(BaseModel):
         if not v:
             raise ValueError("scope value must not be empty")
         return v
+
+    @model_validator(mode="after")
+    def _normalize(self) -> ScopeEntry:
+        """Coerce pasted URL/glob values into the matching ``kind``.
+
+        ``domain``/``wildcard``/``url`` values are host patterns; anything else
+        (scheme, port, path) is stripped. A leading ``*.`` forces ``wildcard``;
+        a ``wildcard`` without ``*.`` becomes ``domain`` (the closest intent:
+        apex plus subdomains). ``ip_range``/``app_id`` values pass through.
+        """
+        if self.kind in {"ip_range", "app_id"}:
+            return self
+        v = normalize_host_pattern(self.value)
+        if not v:
+            raise ValueError("scope value has no usable host")
+        if v.startswith("*."):
+            object.__setattr__(self, "kind", "wildcard")
+            if "*" in v[2:]:
+                raise ValueError(f"'*' is only allowed as a '*.' prefix: {v!r}")
+        else:
+            if self.kind == "wildcard":
+                object.__setattr__(self, "kind", "domain")
+            if "*" in v:
+                raise ValueError(f"'*' is only allowed as a '*.' prefix: {v!r}")
+        object.__setattr__(self, "value", v)
+        return self
 
 
 class ExcludedClass(BaseModel):
@@ -97,6 +159,31 @@ class StagingConfig(BaseModel):
     )
     reset: ResetConfig | None = None
 
+    @field_validator("base_url")
+    @classmethod
+    def _normalize_base_url(cls, v: str) -> str:
+        v = v.strip()
+        if "://" not in v:
+            v = "http://" + v
+        parts = urlparse(v)
+        host = (parts.hostname or "").lstrip("*.")
+        if not host:
+            raise ValueError("staging.base_url must contain a host")
+        netloc = host if parts.port is None else f"{host}:{parts.port}"
+        return f"{parts.scheme or 'http'}://{netloc}"
+
+    @field_validator("host_map")
+    @classmethod
+    def _normalize_host_map(cls, v: dict[str, str]) -> dict[str, str]:
+        """Keys are production hosts; values are staging host[:port] or URLs."""
+        out: dict[str, str] = {}
+        for prod, staging in v.items():
+            prod_host = normalize_host_pattern(prod)
+            staging_netloc = _netloc_of(staging)
+            if prod_host and staging_netloc:
+                out[prod_host] = staging_netloc
+        return out
+
 
 class DuplicateRules(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -137,6 +224,37 @@ class StatusPageConfig(BaseModel):
     base_url: str | None = Field(None, description="public base URL used to build status links")
 
 
+class CanaryConfig(BaseModel):
+    """A unique token planted in staging that a real bug can reveal.
+
+    Claims in ``required_for`` bug classes are expected to surface the canary
+    value — either quoted in the report or observed in a reproduction response.
+    A missing canary is flagged for the triager; it never auto-rejects.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    token: str = Field("", description="unique secret planted in staging, e.g. CANARY-<random>")
+    required_for: list[str] = Field(
+        default_factory=list,
+        description="bug classes where the canary is the expected proof (e.g. idor, lfi)",
+    )
+
+
+class EvidenceRequirement(BaseModel):
+    """Per-bug-class evidence checklist applied at intake.
+
+    ``expect`` holds deterministic checks (see ``deslop.intake.evidence``);
+    unmet items become follow-up questions for the researcher.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    bug_class: str
+    expect: list[str] = Field(default_factory=list)
+
+
 class ProgramConfig(BaseModel):
     """Root model for one program YAML file."""
 
@@ -155,7 +273,31 @@ class ProgramConfig(BaseModel):
     replies: ReplyTemplates = Field(default_factory=ReplyTemplates)
     status_page: StatusPageConfig = Field(default_factory=StatusPageConfig)
     max_requests_per_run: int | None = None
-    allowed_egress_hosts: list[str] = Field(default_factory=list)
+    allowed_egress_hosts: list[str] = Field(
+        default_factory=list,
+        description=(
+            "staging-side hosts the sandbox may reach (bare host, 'host:port', "
+            "'*.domain', or URL). In-scope production hosts are NOT implied here: "
+            "reproducing against them requires allow_production or a per-report "
+            "approve_production decision."
+        ),
+    )
+    allow_production: bool = Field(
+        False,
+        description="permit automated reproduction against in-scope production hosts",
+    )
+    canary: CanaryConfig | None = None
+    evidence_requirements: list[EvidenceRequirement] = Field(default_factory=list)
+
+    @field_validator("allowed_egress_hosts")
+    @classmethod
+    def _normalize_egress(cls, v: list[str]) -> list[str]:
+        out: list[str] = []
+        for item in v:
+            host = normalize_host_pattern(item)
+            if host:
+                out.append(host)
+        return out
 
     @field_validator("id")
     @classmethod

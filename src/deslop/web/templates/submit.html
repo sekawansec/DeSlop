@@ -1,94 +1,104 @@
 {% extends "base.html" %}
 {% block title %}Submit a report{% endblock %}
-{% block container_class %}container-narrow{% endblock %}
+{% block container_class %}container narrow{% endblock %}
 {% block content %}
-<div class="page-head">
-  <h1>Submit a vulnerability report</h1>
-  <p>Reports are only accepted with reproduction steps and at least one piece of
-  evidence — a raw HTTP request, a HAR capture, or a runnable PoC. That requirement
-  is the first slop filter: a report we can reproduce is a report we can act on.</p>
-</div>
+<hgroup>
+  <h1>Submit a report</h1>
+  <p>Reproduction steps and at least one piece of technical proof are required. <a href="/guide">Read the guide</a>.</p>
+</hgroup>
 
-<form method="post" action="/submit" class="card">
-  <div class="field">
-    <label for="program_id">Program</label>
-    <select id="program_id" name="program_id" required>
-      {% for p in programs %}<option value="{{ p.id }}">{{ p.name }}</option>{% endfor %}
+{% if error %}<p class="note err">{{ error }}</p>{% endif %}
+
+<form method="post" action="/submit">
+  <label>Program
+    <select name="program_id" required>
+      {% for p in programs %}<option value="{{ p.id }}" {{ 'selected' if form.program_id == p.id }}>{{ p.name }}</option>{% endfor %}
     </select>
+  </label>
+
+  <label>Title
+    <input type="text" name="title" required maxlength="300" value="{{ form.title or '' }}"
+      placeholder="IDOR on /api/profile exposes other users' data">
+  </label>
+
+  <div class="grid">
+    <label>Asset
+      <input type="text" name="asset" required value="{{ form.asset or '' }}" placeholder="api.example.com">
+    </label>
+    <label>Endpoint
+      <input type="text" name="endpoint" value="{{ form.endpoint or '' }}" placeholder="/api/profile/alice">
+    </label>
   </div>
 
-  <div class="field">
-    <label for="title">Title</label>
-    <input type="text" id="title" name="title" required maxlength="300" placeholder="One line describing the bug">
-  </div>
-
-  <div class="form-row">
-    <div class="field">
-      <label for="asset">Target / asset</label>
-      <input type="text" id="asset" name="asset" required placeholder="api.example.com">
-    </div>
-    <div class="field">
-      <label for="endpoint">Endpoint <span class="subtle">(optional)</span></label>
-      <input type="text" id="endpoint" name="endpoint" placeholder="/api/invoices/1001">
-    </div>
-  </div>
-
-  <div class="form-row">
-    <div class="field">
-      <label for="vuln_class">Bug class</label>
-      <input type="text" id="vuln_class" name="vuln_class" required placeholder="IDOR / CWE-639">
-    </div>
-    <div class="field">
-      <label for="claimed_severity">Claimed severity <span class="subtle">(optional)</span></label>
-      <select id="claimed_severity" name="claimed_severity">
+  <div class="grid">
+    <label>Bug class
+      <input type="text" name="vuln_class" required list="vuln_classes" autocomplete="off"
+        value="{{ form.vuln_class or '' }}" placeholder="idor">
+      <datalist id="vuln_classes">
+        {% for c in ["idor", "xss_reflected", "xss_stored", "ssrf", "open_redirect", "command_injection",
+                     "sql_injection", "csrf", "ssti", "lfi", "xxe", "subdomain_takeover"] %}
+        <option value="{{ c }}">
+        {% endfor %}
+      </datalist>
+    </label>
+    <label>Severity
+      <select name="claimed_severity">
         <option value="">—</option>
-        <option value="critical">critical</option>
-        <option value="high">high</option>
-        <option value="medium">medium</option>
-        <option value="low">low</option>
-        <option value="info">info</option>
+        {% for s in ["critical", "high", "medium", "low", "info"] %}
+        <option value="{{ s }}" {{ 'selected' if form.claimed_severity == s }}>{{ s }}</option>
+        {% endfor %}
       </select>
-    </div>
+    </label>
   </div>
 
-  <div class="divider"></div>
+  <label>Steps to reproduce
+    <textarea name="body" rows="6" required
+      placeholder="1. Log in as attacker account (user_b / bob)&#10;2. Send the request below to the victim's object&#10;3. Response contains Alice's private data">{{ form.body or '' }}</textarea>
+  </label>
 
-  <div class="field">
-    <label for="body">Reproduction steps <span class="badge danger plain">required</span></label>
-    <textarea id="body" name="body" required
-      placeholder="1. Log in as user B&#10;2. Send GET /api/invoices/1001&#10;3. Observe user A's invoice is returned"></textarea>
+  <label>Raw HTTP request
+    <textarea name="raw_http" rows="6" class="mono"
+      placeholder="GET /api/profile/alice HTTP/1.1&#10;Host: api.example.com&#10;Cookie: session=attacker-session-here">{{ form.raw_http or '' }}</textarea>
+  </label>
+
+  <div class="grid">
+    <label>HAR <small class="muted">optional</small>
+      <textarea name="har" rows="5" class="mono"
+        placeholder='{"log": {"entries": [{"request": {...}, "response": {...}}]}}'>{{ form.har or '' }}</textarea>
+    </label>
+    <label>PoC <small class="muted">optional</small>
+      <textarea name="poc" rows="5" class="mono"
+        placeholder="curl -H 'Cookie: session=attacker' https://api.example.com/api/profile/alice">{{ form.poc or '' }}</textarea>
+    </label>
   </div>
 
-  <div class="field">
-    <label for="raw_http">Raw HTTP request <span class="badge plain">one evidence field required</span></label>
-    <textarea id="raw_http" name="raw_http"
-      placeholder="GET /api/invoices/1001 HTTP/1.1&#10;Host: api.example.com&#10;Cookie: session=..."></textarea>
+  <label>PoC video <small class="muted">optional, YouTube only</small>
+    <input type="url" name="poc_video" value="{{ form.poc_video or '' }}"
+      placeholder="https://youtu.be/dQw4w9WgXcQ">
+  </label>
+
+  <div class="grid">
+    <label>Name <small class="muted">optional</small>
+      <input type="text" name="researcher" value="{{ form.researcher or '' }}" placeholder="your handle">
+    </label>
+    <label>Email <small class="muted">optional</small>
+      <input type="email" name="researcher_email" value="{{ form.researcher_email or '' }}" placeholder="you@example.com">
+    </label>
   </div>
 
-  <div class="form-row">
-    <div class="field">
-      <label for="har">HAR contents <span class="subtle">(optional)</span></label>
-      <textarea id="har" name="har" placeholder="{ ... }"></textarea>
-    </div>
-    <div class="field">
-      <label for="poc">Runnable PoC <span class="subtle">(optional)</span></label>
-      <textarea id="poc" name="poc" placeholder="python3 poc.py --target ..."></textarea>
-    </div>
-  </div>
+  <label>AI assistance
+    <select name="ai_used">
+      <option value="" {{ 'selected' if not form.ai_used }}>prefer not to say</option>
+      <option value="no" {{ 'selected' if form.ai_used == 'no' }}>no</option>
+      <option value="yes" {{ 'selected' if form.ai_used == 'yes' }}>yes, verified by me</option>
+    </select>
+  </label>
 
-  <div class="divider"></div>
+  <label>
+    <input type="checkbox" name="attestation" value="yes" required {{ 'checked' if form.attestation }}>
+    I reproduced this myself. False claims lead to a ban.
+  </label>
 
-  <div class="form-row">
-    <div class="field">
-      <label for="researcher">Your name <span class="subtle">(optional)</span></label>
-      <input type="text" id="researcher" name="researcher">
-    </div>
-    <div class="field">
-      <label for="researcher_email">Email <span class="subtle">(optional, for status updates)</span></label>
-      <input type="email" id="researcher_email" name="researcher_email">
-    </div>
-  </div>
-
-  <button type="submit">Submit report</button>
+  <button type="submit">Submit</button>
 </form>
 {% endblock %}

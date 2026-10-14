@@ -1,163 +1,169 @@
 {% extends "base.html" %}
 {% block title %}{{ report.id }}{% endblock %}
 {% block content %}
-<div class="page-head row" style="justify-content:space-between;">
+<p><a href="/dashboard" class="muted">← Queue</a></p>
+<hgroup>
+  <h1>{{ report.title }}</h1>
+  <p>
+    <span class="mono">{{ report.id }}</span> ·
+    <span class="st {{ status_badge.get(report.status, '') }}">{{ report.status|replace('_',' ') }}</span> ·
+    public: {{ report.public_status|replace('_',' ') }}
+  </p>
+</hgroup>
+
+{% if notice %}<p class="note ok">{{ notice }}</p>{% endif %}
+{% if triage and triage.injection_flag %}<p class="note err"><strong>Prompt injection detected.</strong> The report contains instructions aimed at the model.</p>{% endif %}
+{% if production_gate %}<p class="note warn"><strong>Production gate.</strong> Targets an unmapped production host. Nothing ran.</p>{% endif %}
+
+<div class="detail">
   <div>
-    <h1>{{ report.title }}</h1>
-    <p class="row">
-      <span class="mono">{{ report.id }}</span>
-      <span class="badge neutral plain">{{ report.status|replace('_',' ') }}</span>
-      <span class="badge info plain">public: {{ report.public_status }}</span>
-    </p>
-  </div>
-  <a class="btn ghost" href="/dashboard">Back</a>
-</div>
+    {% if triage and triage.reasoning %}
+    <section>
+      <h2>Pipeline</h2>
+      <p class="muted">{{ triage.reasoning }}</p>
+    </section>
+    {% endif %}
 
-{% if triage and triage.injection_flag %}
-<div class="banner danger"><strong>Prompt injection detected.</strong> This report contained instructions aimed at the model. Review carefully.</div>
-{% endif %}
+    {% if checklist %}
+    <section>
+      <h2>Checklist</h2>
+      <ul class="checks">
+        {% for c in checklist %}
+        <li class="{{ 'pass' if c.passed else 'fail' }}">
+          <span class="mark">{{ '✓' if c.passed else '✗' }}</span>
+          <div>{{ c.code|replace('_', ' ') }}{% if not c.passed %}<br><small class="muted">{{ c.question }}</small>{% endif %}</div>
+        </li>
+        {% endfor %}
+      </ul>
+    </section>
+    {% endif %}
 
-<div class="grid-cards">
-  <div class="card">
-    <h2>Details</h2>
-    <table class="kv">
-      <tr><th>Asset</th><td>{{ report.asset or "—" }}</td></tr>
-      <tr><th>Endpoint</th><td class="mono">{{ report.endpoint or "—" }}</td></tr>
-      <tr><th>Vuln class</th><td>{{ report.vuln_class or "—" }}</td></tr>
-      <tr><th>Claimed severity</th><td>{{ report.claimed_severity or "—" }}</td></tr>
-      <tr><th>Researcher</th><td>{{ report.researcher or "anonymous" }}</td></tr>
-    </table>
-  </div>
+    {% if dupes %}
+    <section>
+      <h2>Possible duplicates</h2>
+      <table>
+        <thead><tr><th>Report</th><th>Score</th><th>Verdict</th></tr></thead>
+        <tbody>
+        {% for d in dupes %}
+        <tr>
+          <td><a class="mono" href="/dashboard/reports/{{ d.candidate_report_id }}">{{ d.candidate_report_id }}</a>
+            {% if d.reasoning %}<br><small class="muted">{{ d.reasoning }}</small>{% endif %}</td>
+          <td>{{ '%.2f'|format(d.boosted or d.similarity) }}</td>
+          <td><span class="st {{ 'warn' if d.verdict == 'same_root_cause' else '' }}">{{ (d.verdict or '—')|replace('_',' ') }}</span></td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </section>
+    {% endif %}
 
-  {% if triage %}
-  <div class="card">
-    <h2>Triage result</h2>
-    <table class="kv">
-      <tr><th>Routing</th><td><span class="badge plain">{{ triage.routing_category or "—" }}</span></td></tr>
-      <tr><th>Suggested CVSS</th><td>
-        {% if triage.suggested_cvss %}
-          {{ triage.suggested_cvss.severity }} <strong>{{ triage.suggested_cvss.base_score }}</strong>
-          <div class="subtle mono">{{ triage.suggested_cvss.vector }}</div>
-        {% else %}—{% endif %}
-      </td></tr>
-      <tr><th>Reasoning</th><td class="muted">{{ triage.reasoning or "—" }}</td></tr>
-      <tr><th>Final decision</th><td>{{ triage.final_decision or "—" }}</td></tr>
-    </table>
-  </div>
-  {% endif %}
-</div>
-
-<div class="card">
-  <h2>Original report</h2>
-  <pre>{{ report.body }}</pre>
-</div>
-
-<div class="card">
-  <h2>Parsed steps</h2>
-  {% if plans %}
-    {% for plan in plans %}
-    <h3>Plan v{{ plan.version }}</h3>
-    <table>
-      <thead><tr><th>#</th><th>Step</th><th>Source sentence</th></tr></thead>
-      <tbody>
-      {% for step in plan.steps %}
-      <tr>
-        <td class="muted">{{ step.index }}</td>
-        <td><code>{{ step.request.method }} {{ step.request.url }}</code>
-          {% if step.as_account %}<span class="badge plain">as {{ step.as_account }}</span>{% endif %}</td>
-        <td class="muted">{{ step.source.quote if step.source else "—" }}</td>
-      </tr>
+    <section>
+      <h2>Report</h2>
+      <pre>{{ report.body }}</pre>
+      {% for att in report.attachments or [] %}
+      <details>
+        <summary class="mono">{{ att.name }}</summary>
+        <pre>{{ att.content }}</pre>
+      </details>
       {% endfor %}
-      </tbody>
-    </table>
-    <p class="subtle">{{ plan.substitutions|length }} substitution(s)</p>
-    {% endfor %}
-  {% else %}
-  <p class="muted">No parsed plan (the report may not have reached the parser).</p>
-  {% endif %}
-</div>
+    </section>
 
-<div class="card">
-  <h2>Runs &amp; evidence</h2>
-  {% if runs %}
-  <table>
-    <thead><tr><th>Run</th><th>Status</th><th>Verdict</th><th>Evidence</th></tr></thead>
-    <tbody>
-    {% for run in runs %}
-    <tr><td class="mono">{{ run.run_id }}</td><td>{{ run.status }}</td>
-        <td>{% if run.verdict %}<span class="badge {{ 'ok' if run.verdict == 'proven' else 'neutral' }} plain">{{ run.verdict }}</span>{% else %}—{% endif %}</td>
-        <td><pre>{{ run.evidence }}</pre></td></tr>
-    {% endfor %}
-    </tbody>
-  </table>
-  {% else %}
-  <p class="muted">No reproduction runs recorded.</p>
-  {% endif %}
-</div>
+    {% if plans %}
+    <section>
+      <h2>Reproduction</h2>
+      {% for plan in plans|reverse %}
+      <details {{ 'open' if loop.first }}>
+        <summary>Plan v{{ plan.version }} · {{ plan.steps|length }} step{{ '' if plan.steps|length == 1 else 's' }}</summary>
+        <table>
+          <tbody>
+          {% for step in plan.steps %}
+          <tr>
+            <td class="muted">{{ step.index }}</td>
+            <td class="mono">{{ step.request.method }} {{ step.request.url }}</td>
+            <td>{{ step.as_account or "" }}</td>
+          </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </details>
+      {% endfor %}
+      {% for run in runs|reverse %}
+      <details>
+        <summary><span class="st {{ 'ok' if run.verdict == 'proven' else 'danger' if run.verdict == 'not_proven' else '' }}">{{ run.verdict or run.status }}</span>
+          <span class="mono muted">{{ run.run_id[:12] }}</span>{% if run.duration_ms %} <span class="muted">· {{ run.duration_ms }} ms</span>{% endif %}</summary>
+        <pre>{{ run.evidence|tojson(indent=2) }}</pre>
+      </details>
+      {% endfor %}
+    </section>
+    {% endif %}
 
-<div class="card">
-  <h2>Messages</h2>
-  {% for m in messages %}
-  <div class="msg {{ m.direction }}">
-    <div class="meta">{{ m.direction }} · {{ m.sent_by or "—" }} · {{ m.created_at }}</div>
-    <div>{{ m.body }}</div>
-  </div>
-  {% else %}
-  <p class="muted">No messages.</p>
-  {% endfor %}
-</div>
-
-<div class="card">
-  <div class="card-head">
-    <h2>Actions{% if not can_act %} <span class="badge neutral">read-only account</span>{% endif %}</h2>
-  </div>
-  {% if can_act %}
-  <form method="post" action="/dashboard/reports/{{ report.id }}/decision" class="row">
-    <select name="decision" style="width:auto">
-      <option value="accept">accept</option>
-      <option value="reject">reject</option>
-      <option value="duplicate">mark duplicate</option>
-      <option value="request_info">request info</option>
-      <option value="approve_deviation">approve deviations &amp; re-run</option>
-      <option value="approve_production">approve production execution</option>
-    </select>
-    <input type="text" name="reason" placeholder="reason (optional)" style="flex:1; min-width:180px">
-    <button type="submit">Record decision</button>
-  </form>
-  <div class="divider"></div>
-
-  <h3>Reply to researcher</h3>
-  <form method="post" action="/dashboard/reports/{{ report.id }}/reply">
-    <textarea name="body" required placeholder="{{ triage.reply_draft if triage and triage.reply_draft else 'Reply text' }}"></textarea>
-    <p><button type="submit" class="sm">Send reply</button></p>
-  </form>
-
-  <div class="divider"></div>
-  <div class="split" style="grid-template-columns:1fr 1fr; gap:20px;">
-    <div>
-      <h3>Public status</h3>
-      <form method="post" action="/dashboard/reports/{{ report.id }}/public_status" class="row">
-        <select name="public_status" style="flex:1">
-          {% for s in public_statuses %}<option value="{{ s }}">{{ s }}</option>{% endfor %}
-        </select>
-        <button type="submit" class="subtle sm">Update</button>
-      </form>
-    </div>
-    <div>
-      <h3>Retest &amp; token</h3>
-      <div class="row">
-        <form method="post" action="/dashboard/reports/{{ report.id }}/retest">
-          <button type="submit" class="subtle sm">Re-run reproduction</button>
-        </form>
-        <form method="post" action="/dashboard/reports/{{ report.id }}/revoke">
-          <button type="submit" class="danger sm">Revoke status link</button>
-        </form>
+    <section>
+      <h2>Messages</h2>
+      {% for m in messages %}
+      <div class="msg {{ 'mine' if m.direction == 'to_researcher' }}">
+        <small>{{ 'Researcher' if m.direction == 'from_researcher' else (m.sent_by or 'Triage') }} · {{ m.created_at|dt }}</small>
+        <p>{{ m.body }}</p>
       </div>
-    </div>
+      {% else %}
+      <p class="muted">No messages.</p>
+      {% endfor %}
+    </section>
   </div>
-  {% endif %}
 
-  <div class="divider"></div>
-  <a class="btn ghost" href="/dashboard/reports/{{ report.id }}/evidence">Download evidence pack</a>
+  <aside>
+    <dl class="kv">
+      <dt>Asset</dt><dd>{{ report.asset or "—" }}</dd>
+      <dt>Endpoint</dt><dd class="mono">{{ report.endpoint or "—" }}</dd>
+      <dt>Class</dt><dd class="mono">{{ report.vuln_class or "—" }}</dd>
+      <dt>Severity</dt><dd>{{ report.claimed_severity or "—" }}{% if triage and triage.suggested_cvss %} <span class="muted">· CVSS {{ triage.suggested_cvss.base_score }}</span>{% endif %}</dd>
+      <dt>Researcher</dt><dd>{{ report.researcher or "anonymous" }}</dd>
+      <dt>Attested</dt><dd>{{ "yes" if report.attestation else "no" }}</dd>
+      <dt>AI used</dt><dd>{{ report.ai_used or "—" }}</dd>
+      {% if report.poc_url %}<dt>PoC video</dt><dd><a href="{{ report.poc_url }}" rel="noopener noreferrer" target="_blank">YouTube ↗</a></dd>{% endif %}
+      {% if triage and triage.final_decision %}<dt>Decision</dt><dd>{{ triage.final_decision|replace('_',' ') }}</dd>{% endif %}
+    </dl>
+
+    {% if can_act %}
+    <div class="panel">
+    <form method="post" action="/dashboard/reports/{{ report.id }}/decision">
+      <select name="decision" aria-label="Decision">
+        {% for value, label in [("accept","Accept"),("reject","Reject"),("duplicate","Duplicate"),("request_info","Request info"),("approve_deviation","Approve deviation & re-run"),("approve_production","Approve production & re-run")] %}
+        <option value="{{ value }}" {{ 'selected' if suggested_decision == value }}>{{ label }}</option>
+        {% endfor %}
+      </select>
+      <input type="text" name="reason" placeholder="Reason" aria-label="Reason">
+      <button type="submit">Record decision</button>
+    </form>
+
+    <form method="post" action="/dashboard/reports/{{ report.id }}/reply">
+      <textarea name="body" rows="5" required placeholder="Reply to researcher" aria-label="Reply">{{ triage.reply_draft if triage and triage.reply_draft else '' }}</textarea>
+      <button type="submit" class="secondary">Send reply</button>
+    </form>
+
+    <form method="post" action="/dashboard/reports/{{ report.id }}/public_status">
+      <div role="group">
+        <select name="public_status" aria-label="Public status">
+          {% for s in public_statuses %}<option value="{{ s }}" {{ 'selected' if s == report.public_status }}>{{ s|replace('_',' ') }}</option>{% endfor %}
+        </select>
+        <button type="submit" class="secondary outline">Set</button>
+      </div>
+    </form>
+
+    {% if plans %}
+    <form method="post" action="/dashboard/reports/{{ report.id }}/retest">
+      <button type="submit" class="secondary outline">Re-run reproduction</button>
+    </form>
+    {% endif %}
+    {% endif %}
+
+    <a role="button" class="secondary outline" data-no-loadbar data-no-prerender href="/dashboard/reports/{{ report.id }}/evidence">Download evidence pack</a>
+    </div>
+
+    {% if can_act %}
+    <form method="post" action="/dashboard/reports/{{ report.id }}/revoke">
+      <button type="submit" class="link-danger">Revoke status link</button>
+    </form>
+    {% endif %}
+  </aside>
 </div>
 {% endblock %}

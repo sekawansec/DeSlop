@@ -16,6 +16,7 @@ from ..config.schema import ProgramConfig
 from ..config.settings import Settings, get_settings
 from ..db.enums import ReproRunStatus, Verdict
 from ..db.models import Report, ReproPlan, ReproRun
+from ..parser.step_parser import canonical_bug_class as _canonical
 from ..recipes.registry import get_recipe
 from ..repro.executor import WebExecutor
 from ..repro.steps import ReproPlanModel, ReproStep, SourceRef, StepExpectation, StructuredRequest
@@ -85,17 +86,73 @@ def retest_report(
     if plan_row is None:
         raise ValueError(f"report {report_id!r} has no stored reproduction plan")
 
-    effective_bug_class = bug_class or report.vuln_class or "unknown"
+    # Prefer the bug class the parser locked into the plan; fall back to the
+    # researcher-declared class (normalized) for rows written before the column
+    # existed.
+    effective_bug_class = (
+        bug_class
+        or plan_row.bug_class
+        or _canonical(report.vuln_class)
+        or "unknown"
+    )
     plan = _plan_from_row(plan_row, effective_bug_class)
 
     recipe = get_recipe(plan.bug_class)
     executor = executor or WebExecutor(settings)
-    execution = executor.execute(plan, program, run_id=run_id)
+
+    # Re-run the same locked steps but with fresh environment substitutions:
+    # host_map rewrites, a new per-run OOB token, and credential bindings.
+    setup_data: dict = {}
+    if recipe is not None:
+        try:
+            setup = recipe.setup(program, run_id=run_id or report_id)
+            setup_data = dict(setup.data or {})
+        except Exception:  # noqa: BLE001 - retest stays best-effort
+            setup_data = {}
+    if program.canary and program.canary.enabled and program.canary.token:
+        setup_data.setdefault("canary", program.canary.token)
+
+    from ..repro.substitution import apply_substitutions
+    from ..sandbox.policy import build_egress_policy, host_of
+
+    subs = apply_substitutions(
+        plan,
+        program,
+        oob_base_url=settings.oob_base_url,
+        run_token=setup_data.get("run_token"),
+    )
+    exec_plan = plan.model_copy(update={"steps": subs.steps})
+
+    approved = (
+        bool(report.production_approved)
+        or settings.allow_production
+        or program.allow_production
+    )
+    egress = build_egress_policy(program, settings.oob_base_url, production_approved=approved)
+    denied = sorted(
+        {host_of(s.request.url) for s in exec_plan.steps if not egress.permits(host_of(s.request.url))}
+        - {""}
+    )
+    if denied:
+        note = (
+            "production hosts require an approve_production decision"
+            if any(egress.is_production(h) for h in denied)
+            else "hosts outside the sandbox egress allowlist"
+        )
+        return RetestResult(
+            report_id=report_id,
+            still_reproducible=False,
+            verdict=Verdict.INCONCLUSIVE.value,
+            run_id=run_id or report_id,
+            notes=[f"egress denied to {', '.join(denied)}: {note}"],
+        )
+
+    execution = executor.execute(exec_plan, program, run_id=run_id, egress=egress)
 
     verdict = Verdict.INCONCLUSIVE
     evidence: dict = {}
     if recipe is not None:
-        verification = recipe.verify(plan, execution, program)
+        verification = recipe.verify(exec_plan, execution, program, setup_data=setup_data)
         verdict = verification.verdict
         evidence = verification.evidence
 

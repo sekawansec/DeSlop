@@ -18,6 +18,23 @@ TEMPLATES_DIR = Path(__file__).parent / "templates"
 STATIC_DIR = Path(__file__).parent / "static"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
+
+def _format_dt(value: object) -> str:
+    """Render datetimes / ISO strings as ``YYYY-MM-DD HH:MM`` for the UI."""
+    from datetime import datetime
+
+    if not value:
+        return "—"
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value)
+        except ValueError:
+            return value
+    return value.strftime("%Y-%m-%d %H:%M") if isinstance(value, datetime) else str(value)
+
+
+templates.env.filters["dt"] = _format_dt
+
 #: Paths reachable even before first-time setup is complete.
 _SETUP_EXEMPT_PREFIXES = ("/setup", "/static", "/healthz")
 _SETUP_EXEMPT_EXACT = ("/favicon.ico",)
@@ -93,6 +110,14 @@ def create_app(settings: Settings | None = None, registry: ProgramRegistry | Non
         if not is_setup_complete(settings):
             return RedirectResponse(url="/setup", status_code=307)
         return await call_next(request)
+
+    @app.get("/favicon.ico")
+    def favicon() -> RedirectResponse:
+        # The inline SVG favicon lives in base.html; satisfy the browser's
+        # implicit /favicon.ico fetch with silence instead of a 404.
+        from fastapi.responses import Response
+
+        return Response(status_code=204)
 
     @app.get("/healthz")
     def healthz() -> dict:

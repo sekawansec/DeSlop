@@ -79,6 +79,17 @@ class Report(Base, TimestampMixin):
     embedding: Mapped[list[float] | None] = _embedding_col()
     root_cause_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # Intake attestation: the researcher asserted they reproduced the bug and
+    # optionally disclosed AI assistance. Recorded, never trusted on its own.
+    attestation: Mapped[bool] = mapped_column(Boolean, default=False)
+    ai_used: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # Optional PoC video (YouTube link); validated at intake.
+    poc_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
+    # A triager's approve_production decision flips this; it permits automated
+    # reproduction against in-scope production hosts for this report only.
+    production_approved: Mapped[bool] = mapped_column(Boolean, default=False)
+
     last_public_update_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -122,6 +133,7 @@ class ReproPlan(Base, TimestampMixin):
         String(64), ForeignKey("reports.id", ondelete="CASCADE"), index=True
     )
     version: Mapped[int] = mapped_column(Integer, default=1)
+    bug_class: Mapped[str | None] = mapped_column(String(64), nullable=True)
     steps: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
     substitutions: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
     parser_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
@@ -182,6 +194,9 @@ class TriageResult(Base, TimestampMixin):
     reasoning: Mapped[str | None] = mapped_column(Text, nullable=True)
     injection_flag: Mapped[bool] = mapped_column(Boolean, default=False)
     injection_details: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    #: True when the plan was stopped at the production gate — an
+    #: ``approve_production`` decision re-runs it.
+    production_gate: Mapped[bool] = mapped_column(Boolean, default=False)
     reply_draft: Mapped[str | None] = mapped_column(Text, nullable=True)
     final_decision: Mapped[str | None] = mapped_column(String(32), nullable=True)
     decided_by: Mapped[str | None] = mapped_column(String(128), nullable=True)

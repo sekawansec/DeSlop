@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import time
 import uuid
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
@@ -21,6 +21,10 @@ from ..config.settings import Settings, get_settings
 from .interfaces import ExecutionResult, StepResult
 from .login import Session, login_account
 from .steps import ReproPlanModel, ReproStep
+
+if TYPE_CHECKING:
+    # sandbox.policy imports repro.scope; a runtime import here would cycle.
+    from ..sandbox.policy import EgressPolicy
 
 REDACT_HEADERS = {"authorization", "cookie", "set-cookie", "x-api-key", "x-auth-token"}
 
@@ -75,6 +79,9 @@ class WebExecutor:
         req = step.request
         headers = dict(req.headers)
         headers[self.settings.repro_header] = run_id
+        # Log-correlation header: lets the target's WAF/reverse-proxy logs tie
+        # reproduction traffic back to the report being verified.
+        headers[self.settings.bounty_user_header] = f"deslop-repro-{run_id}"
 
         if session is not None:
             for k, v in session.headers.items():
@@ -91,8 +98,15 @@ class WebExecutor:
         return req.method, req.url, headers, cookies, req.body
 
     def execute(
-        self, plan: ReproPlanModel, program: ProgramConfig, *, run_id: str | None = None
+        self,
+        plan: ReproPlanModel,
+        program: ProgramConfig,
+        *,
+        run_id: str | None = None,
+        egress: EgressPolicy | None = None,
     ) -> ExecutionResult:
+        from ..sandbox.policy import build_egress_policy, host_of
+
         run_id = run_id or uuid.uuid4().hex
         result = ExecutionResult(run_id=run_id, bug_class=plan.bug_class)
         limiter = RateLimiter(program_max_rps(self.settings, program))
@@ -100,6 +114,12 @@ class WebExecutor:
         started = time.monotonic()
         sessions: dict[str, Session] = {}
         client = self._client_factory()
+        # Egress policy is enforced on every request — a validated plan must
+        # never reach a host outside the sandbox allowlist (or unapproved
+        # production).
+        policy = egress or build_egress_policy(
+            program, self.settings.oob_base_url
+        )
 
         try:
             for step in plan.steps:
@@ -112,7 +132,41 @@ class WebExecutor:
                     result.failed_step_index = step.index
                     break
 
-                session = self._resolve_session(step, sessions, program)
+                host = host_of(step.request.url)
+                if not policy.permits(host):
+                    reason = (
+                        "production host; reproduction requires an approve_production decision"
+                        if policy.is_production(host)
+                        else "host not in the sandbox egress allowlist"
+                    )
+                    result.step_results.append(
+                        StepResult(
+                            index=step.index,
+                            ok=False,
+                            request={"method": step.request.method, "url": step.request.url},
+                            error=f"egress denied: {reason}",
+                        )
+                    )
+                    result.failed_step_index = step.index
+                    result.error = f"step {step.index} egress denied: {reason}"
+                    break
+
+                try:
+                    session = self._resolve_session(step, sessions, program)
+                except Exception as exc:  # noqa: BLE001 - a failed login is a failed step
+                    # A login request that never reaches the target must not
+                    # crash the run — it is a failed step like any other.
+                    result.step_results.append(
+                        StepResult(
+                            index=step.index,
+                            ok=False,
+                            request={"method": step.request.method, "url": step.request.url},
+                            error=f"login for {step.as_account} failed: {type(exc).__name__}: {exc}",
+                        )
+                    )
+                    result.failed_step_index = step.index
+                    result.error = f"step {step.index} login failed: {exc}"
+                    break
                 method, url, headers, cookies, body = self._build_request(step, session, run_id)
                 limiter.wait()
 

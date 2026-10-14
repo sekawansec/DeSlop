@@ -41,6 +41,10 @@ INVOICES: dict[int, dict[str, Any]] = {
     1003: {"id": 1003, "owner": "carol", "amount": 999.00, "secret": "ACME-INVOICE-CAROL-1003"},
 }
 
+#: Planted canary record: reachable only through the IDOR-vulnerable profile
+#: endpoint. A report claiming cross-tenant data access should surface it.
+CANARY_TOKEN = "CANARY-LAB-D3SL0P-7f2a"
+
 _sessions: dict[str, str] = {}
 _comments: list[dict[str, str]] = []
 
@@ -116,6 +120,21 @@ def create_app() -> FastAPI:
             return JSONResponse({"error": "unauthenticated"}, status_code=401)
         mine = [inv for inv in INVOICES.values() if inv["owner"] == username]
         return JSONResponse({"invoices": mine})
+
+    # ------------------------------------------------------------ canary
+    @app.get("/api/profile/{username}")
+    def profile(username: str, request: Request) -> Response:
+        # VULNERABLE: no ownership check — leaks the per-user canary token that
+        # DeSlop programs can require as proof of real access.
+        if not _current_user(request):
+            return JSONResponse({"error": "unauthenticated"}, status_code=401)
+        user = USERS.get(username)
+        if not user:
+            return JSONResponse({"error": "not found"}, status_code=404)
+        return JSONResponse(
+            {"username": username, "role": user["role"], "tenant": user["tenant"],
+             "canary": CANARY_TOKEN if username == "alice" else f"user-{username}"}
+        )
 
     # --------------------------------------------------------- Reflected XSS
     @app.get("/search", response_class=HTMLResponse)

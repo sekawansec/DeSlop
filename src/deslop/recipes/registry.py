@@ -36,7 +36,12 @@ class Recipe(Protocol):
     def setup(self, program: ProgramConfig, *, run_id: str) -> SetupResult: ...
 
     def verify(
-        self, plan: ReproPlanModel, execution: ExecutionResult, program: ProgramConfig
+        self,
+        plan: ReproPlanModel,
+        execution: ExecutionResult,
+        program: ProgramConfig,
+        *,
+        setup_data: dict | None = None,
     ) -> VerificationResult: ...
 
 
@@ -71,7 +76,12 @@ class BaseRecipe:
         return SetupResult(ok=True, detail="no setup required")
 
     def verify(
-        self, plan: ReproPlanModel, execution: ExecutionResult, program: ProgramConfig
+        self,
+        plan: ReproPlanModel,
+        execution: ExecutionResult,
+        program: ProgramConfig,
+        *,
+        setup_data: dict | None = None,
     ) -> VerificationResult:
         if self.verifier is None:  # pragma: no cover - misconfiguration
             raise RuntimeError(f"recipe {self.bug_class!r} has no verifier")

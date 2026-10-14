@@ -58,7 +58,8 @@ def test_setup_static_exempt(fresh_client):
     # Static assets must load before setup is complete.
     r = fresh_client.get("/static/app.css")
     assert r.status_code == 200
-    assert "--accent" in r.text
+    assert "--pico-" in r.text
+    assert fresh_client.get("/static/vendor/pico.zinc.min.css").status_code == 200
 
 
 def test_db_check_endpoint(fresh_client):
