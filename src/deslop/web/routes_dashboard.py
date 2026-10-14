@@ -7,6 +7,8 @@ log. Internal statuses are never exposed publicly.
 
 from __future__ import annotations
 
+import contextlib
+
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from sqlalchemy import select
@@ -185,10 +187,9 @@ def report_detail(
         # Per-class evidence checklist for the triager ("did the report
         # demonstrate what this bug class requires?").
         program = None
-        try:
+        with contextlib.suppress(Exception):
+            # checklist still works if the program is unknown
             program = request.app.state.registry.get(report.program_id)
-        except Exception:  # noqa: BLE001 - checklist still works without it
-            pass
         checklist = evidence_checklist(
             canonical_bug_class(report.vuln_class or ""),
             report.body,
