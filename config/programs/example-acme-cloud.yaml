@@ -150,6 +150,28 @@ status_page:
   base_url: "https://vdp.acme-cloud.test"
 
 max_requests_per_run: 50
+
+# Staging-side hosts the executor may reach (bare host covers subdomains,
+# "*.domain" and URLs are normalized at load). The staging base_url and
+# host_map targets are always allowed — list extra seed/API hosts here.
 allowed_egress_hosts:
   - "staging.acme-cloud.test"
   - "staging-api.acme-cloud.test"
+
+# Reproduction against in-scope hosts that are NOT mapped to staging is
+# denied unless this is true or a triager approves it per report
+# (approve_production). Keep false unless you mean it.
+allow_production: false
+
+# Optional: a unique token planted in staging. Claims in `required_for`
+# classes that never surface it get a reviewer note (never auto-rejected).
+# canary:
+#   enabled: true
+#   token: "CANARY-ACME-<random>"
+#   required_for: ["idor", "lfi"]
+
+# Optional: extra intake evidence checks per bug class
+# (see src/deslop/intake/evidence.py for check names).
+# evidence_requirements:
+#   - bug_class: "idor"
+#     expect: ["two_accounts"]

@@ -1,0 +1,14 @@
+title = "DeSlop gitleaks config"
+
+[extend]
+useDefault = true
+
+# Local lab/demo fixtures (DVWA default creds, lab test accounts, canary
+# markers) are not real secrets. Real program configs are still scanned.
+[allowlist]
+description = "Local lab and test fixtures"
+paths = [
+  '''config/(programs|container)/(lab|dvwa)\.yaml''',
+  '''lab/''',
+  '''tests/''',
+]

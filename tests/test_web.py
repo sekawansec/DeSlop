@@ -70,12 +70,30 @@ def test_submit_success_returns_report_id_and_status_url(client):
             "vuln_class": "idor",
             "body": "1. do a thing",
             "raw_http": "GET /api/invoices/1001 HTTP/1.1\nHost: api.lab.test",
+            "attestation": "on",
+            "ai_used": "no",
         },
     )
     assert r.status_code == 201, r.text
     payload = r.json()
     assert payload["report_id"].startswith("RPT-")
     assert "status_url" in payload
+
+
+def test_poc_video_must_be_youtube(client):
+    base = {
+        "program_id": "lab",
+        "title": "IDOR",
+        "asset": "api.lab.test",
+        "vuln_class": "idor",
+        "body": "1. do a thing",
+        "raw_http": "GET /api/invoices/1001 HTTP/1.1\nHost: api.lab.test",
+        "attestation": "on",
+    }
+    bad = client.post("/submit", data={**base, "poc_video": "https://vimeo.com/123"})
+    assert bad.status_code == 422
+    ok = client.post("/submit", data={**base, "poc_video": "https://youtu.be/abc123"})
+    assert ok.status_code == 201, ok.text
 
 
 def test_dashboard_requires_auth(client):

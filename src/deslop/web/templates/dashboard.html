@@ -1,52 +1,101 @@
 {% extends "base.html" %}
 {% block title %}Triage dashboard{% endblock %}
 {% block content %}
-<div class="page-head row" style="justify-content:space-between;">
-  <div>
-    <h1>Triage</h1>
-    <p>{{ total }} report{{ '' if total == 1 else 's' }} · signed in as <strong>{{ triager }}</strong>{% if not can_act %} <span class="badge neutral">read-only</span>{% endif %}</p>
-  </div>
-</div>
-
 <div class="split">
-  <aside class="sidebar">
-    <div class="card">
-      <a class="qitem {{ 'active' if not selected_status else '' }}" href="/dashboard">
-        <span>All reports</span><span class="count">{{ total }}</span>
-      </a>
-      {% for status, items in queues.items() %}
-      <a class="qitem {{ 'active' if selected_status == status else '' }}" href="/dashboard?status={{ status }}">
-        <span>{{ status|replace('_', ' ') }}</span><span class="count">{{ items|length }}</span>
-      </a>
-      {% endfor %}
-    </div>
+  <aside>
+    <nav>
+      <ul>
+        <li><a href="/dashboard" data-filter="" {% if not selected_status %}aria-current="page"{% endif %}>
+          <span>All</span><small class="muted">{{ total }}</small></a></li>
+        {% for status, items in queues.items() %}
+        <li><a href="/dashboard?status={{ status }}" data-filter="{{ status }}" {% if selected_status == status %}aria-current="page"{% endif %}>
+          <span class="st {{ status_badge.get(status, '') }}">{{ status|replace('_', ' ') }}</span>
+          <small class="muted">{{ items|length }}</small></a></li>
+        {% endfor %}
+      </ul>
+    </nav>
   </aside>
 
-  <section>
-    <div class="card">
-      <div class="card-head">
-        <h2>{{ (selected_status|replace('_', ' ')) if selected_status else 'All reports' }}</h2>
-      </div>
-      {% if selected_status and selected %}
+  <div>
+    <hgroup>
+      <h1 id="dash-title">{{ (selected_status|replace('_', ' '))|capitalize if selected_status else 'All reports' }}</h1>
+      <p><span id="dash-count">{{ shown }}</span> shown · {{ triager }}{% if not can_act %} (read-only){% endif %}</p>
+    </hgroup>
+
+    <div class="overflow-auto">
+    <table id="dash-table">
+      <thead><tr><th>Report</th><th>Class</th><th>Status</th><th>Researcher</th><th>Submitted</th></tr></thead>
+      <tbody>
+      {% for row in rows %}
+      {% set r = row.report %}
+      <tr data-status="{{ r.status }}"{% if selected_status and r.status != selected_status %} hidden{% endif %}>
+        <td><a href="/dashboard/reports/{{ r.id }}">{{ r.title }}</a><br><small class="mono muted">{{ r.id }} · {{ r.asset or "—" }}</small></td>
+        <td class="mono">{{ r.vuln_class or "—" }}</td>
+        <td><span class="st {{ status_badge.get(r.status, '') }}">{{ r.status|replace('_',' ') }}</span></td>
+        <td>{{ r.researcher or "anonymous" }}</td>
+        <td class="muted">{{ r.submitted_at|dt }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <p class="muted" id="dash-empty"{% if shown %} hidden{% endif %}>Nothing here.</p>
+    </div>
+
+    {% if researcher_stats %}
+    <details>
+      <summary>Researcher signal</summary>
       <table>
-        <thead><tr><th>ID</th><th>Title</th><th>Asset</th><th>Class</th><th>Status</th><th></th></tr></thead>
+        <thead><tr><th>Researcher</th><th>Reports</th><th>Proven</th><th>Accepted</th><th>Rejected</th><th>Valid rate</th></tr></thead>
         <tbody>
-        {% for r in selected %}
+        {% for s in researcher_stats %}
         <tr>
-          <td class="mono">{{ r.id }}</td>
-          <td>{{ r.title }}</td>
-          <td class="muted">{{ r.asset or "—" }}</td>
-          <td class="muted">{{ r.vuln_class or "—" }}</td>
-          <td><span class="badge neutral plain">{{ r.status|replace('_',' ') }}</span></td>
-          <td class="row end"><a class="btn sm ghost" href="/dashboard/reports/{{ r.id }}">Open</a></td>
+          <td>{{ s.name }}</td><td>{{ s.total }}</td><td>{{ s.proven }}</td>
+          <td>{{ s.accepted }}</td><td>{{ s.rejected }}</td>
+          <td>{% if s.valid_rate is none %}<span class="muted">—</span>{% else %}<span class="st {{ 'ok' if s.valid_rate >= 0.5 else 'danger' }}">{{ '%.0f%%'|format(s.valid_rate * 100) }}</span>{% endif %}</td>
         </tr>
         {% endfor %}
         </tbody>
       </table>
-      {% else %}
-      <div class="empty">Select a queue to view reports.</div>
-      {% endif %}
-    </div>
-  </section>
+    </details>
+    {% endif %}
+  </div>
 </div>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  var rows = document.querySelectorAll('#dash-table tbody tr');
+  var links = document.querySelectorAll('a[data-filter]');
+  var title = document.getElementById('dash-title');
+  var count = document.getElementById('dash-count');
+  var empty = document.getElementById('dash-empty');
+
+  function apply(status) {
+    var shown = 0;
+    rows.forEach(function (r) {
+      var show = !status || r.dataset.status === status;
+      r.hidden = !show;
+      if (show) shown++;
+    });
+    count.textContent = shown;
+    empty.hidden = shown > 0;
+    title.textContent = status
+      ? status.replace(/_/g, ' ').replace(/^./, function (c) { return c.toUpperCase(); })
+      : 'All reports';
+    links.forEach(function (a) {
+      if (a.dataset.filter === status) a.setAttribute('aria-current', 'page');
+      else a.removeAttribute('aria-current');
+    });
+    var url = status ? '?status=' + encodeURIComponent(status) : location.pathname;
+    history.replaceState(null, '', url);
+  }
+
+  links.forEach(function (a) {
+    a.addEventListener('click', function (e) {
+      e.preventDefault();
+      apply(a.dataset.filter);
+    });
+  });
+})();
+</script>
 {% endblock %}

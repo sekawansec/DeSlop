@@ -34,6 +34,9 @@ def create_report(
     vuln_class: str | None,
     claimed_severity: str | None,
     attachments: list[dict] | None = None,
+    attestation: bool = False,
+    ai_used: str | None = None,
+    poc_url: str | None = None,
     status: str = ReportStatus.RECEIVED.value,
 ) -> tuple[Report, str | None]:
     """Create a report and (if the status page is on) issue a status token.
@@ -52,6 +55,9 @@ def create_report(
         vuln_class=vuln_class,
         claimed_severity=claimed_severity,
         attachments=attachments or [],
+        attestation=attestation,
+        ai_used=ai_used,
+        poc_url=poc_url,
         status=status,
         public_status=PublicStatus.RECEIVED.value,
     )
@@ -183,16 +189,49 @@ def run_pipeline_for_report(
     """
     from ..config.settings import get_settings as _get_settings
     from ..db.models import DuplicateCandidate, ReproPlan, ReproRun, TriageResult
+    from ..dedup.detector import NormalizedReport
+    from ..llm.embeddings import HashingEmbedder
     from ..pipeline.orchestrator import Pipeline
 
     settings = settings or _get_settings()
-    pipeline = Pipeline(program, settings=settings)
+
+    # --- Duplicate corpus: embed the new report and load prior embeddings ---
+    embedder = HashingEmbedder(settings.embedding_dim)
+    summary = f"{report.title} {report.vuln_class or ''} {report.endpoint or ''}".strip()
+    if report.embedding is None:
+        report.embedding = embedder.embed([summary])[0]
+    corpus: list[NormalizedReport] = []
+    stmt = select(Report).where(
+        Report.program_id == report.program_id,
+        Report.id != report.id,
+    )
+    for other in session.scalars(stmt):
+        if other.embedding is None:
+            other_summary = (
+                f"{other.title} {other.vuln_class or ''} {other.endpoint or ''}".strip()
+            )
+            other.embedding = embedder.embed([other_summary])[0]
+            other.root_cause_summary = other_summary
+        corpus.append(
+            NormalizedReport(
+                report_id=other.id,
+                asset=other.asset,
+                endpoint=other.endpoint,
+                vuln_class=other.vuln_class,
+                root_cause_summary=other.root_cause_summary or "",
+                embedding=list(other.embedding),
+            )
+        )
+
+    pipeline = Pipeline(program, settings=settings, duplicate_corpus=corpus)
     # Include any raw HTTP request / HAR evidence in the text the parser sees, so
     # a report whose steps are expressed as a raw request reproduces offline.
     parse_text = report.body
+    evidence_blobs: list[str] = []
     for att in report.attachments or []:
         content = att.get("content")
         if content:
+            evidence_blobs.append(content)
             parse_text += "\n\n```http\n" + content.strip() + "\n```\n"
     result = pipeline.run(
         title=report.title,
@@ -201,17 +240,27 @@ def run_pipeline_for_report(
         endpoint=report.endpoint,
         vuln_class=report.vuln_class,
         run_id=report.id,
+        production_approved=bool(report.production_approved),
+        evidence_blobs=evidence_blobs,
     )
 
     report.status = result.status
+    report.root_cause_summary = summary
 
-    # Persist the parsed plan (if any).
+    # Persist the parsed plan (if any). A re-run (e.g. after an
+    # approve_production decision) stores a new plan version.
     plan_row = None
     if result.parse and result.parse.plan is not None:
         plan = result.parse.plan
+        existing_versions = [
+            p.version for p in session.scalars(
+                select(ReproPlan).where(ReproPlan.report_id == report.id)
+            )
+        ]
         plan_row = ReproPlan(
             report_id=report.id,
-            version=1,
+            version=(max(existing_versions) + 1) if existing_versions else 1,
+            bug_class=plan.bug_class,
             steps=[s.model_dump(mode="json") for s in plan.steps],
             substitutions=(
                 [s.to_dict() for s in result.substitutions.substitutions]
@@ -240,15 +289,22 @@ def run_pipeline_for_report(
         session.add(run)
 
     # Persist triage result.
-    triage = TriageResult(
-        report_id=report.id,
-        routing_category=result.routing.category if result.routing else None,
-        reasoning=result.routing.reason if result.routing else None,
-        injection_flag=result.injection.flagged,
-        injection_details=result.injection.to_dict().get("findings", []),
-        suggested_cvss=result.cvss,
-    )
-    session.add(triage)
+    reasoning_parts = [
+        result.routing.reason if result.routing else "",
+        *result.notes,
+        *result.evidence_gaps,
+    ]
+    triage = session.scalar(select(TriageResult).where(TriageResult.report_id == report.id))
+    if triage is None:
+        triage = TriageResult(report_id=report.id)
+        session.add(triage)
+    triage.routing_category = result.routing.category if result.routing else None
+    triage.reasoning = "; ".join(p for p in reasoning_parts if p) or None
+    triage.injection_flag = result.injection.flagged
+    triage.injection_details = result.injection.to_dict().get("findings", [])
+    triage.production_gate = result.production_gate
+    triage.suggested_cvss = result.cvss
+    triage.reply_draft = _draft_reply(program, result)
 
     for cand in result.duplicate_candidates:
         session.add(
@@ -293,6 +349,27 @@ def run_pipeline_for_report(
         routing_category=result.routing.category if result.routing else None,
         verdict=result.verification.verdict.value if result.verification else None,
     )
+
+
+def _draft_reply(program: ProgramConfig, result) -> str | None:  # noqa: ANN001
+    """Draft the researcher reply for outcomes that need human follow-up.
+
+    For ``needs_info`` the draft bundles the missing fields plus
+    challenge-response questions only someone who actually ran the exploit can
+    answer. Uses the program's reply template when configured.
+    """
+    if result.routing is None:
+        return None
+    if result.routing.category != "needs_info":
+        return None
+    questions: list[str] = []
+    if result.parse and result.parse.missing_info:
+        questions.extend(f"- Please provide: {m}" for m in result.parse.missing_info)
+    questions.extend(f"- {gap}" for gap in result.evidence_gaps)
+    if not questions:
+        questions.append("- Please provide complete reproduction steps and raw evidence.")
+    body = (program.replies.needs_info or "Thanks for the report. We need more information to reproduce it:")
+    return body + "\n" + "\n".join(questions)
 
 
 @dataclass

@@ -22,18 +22,24 @@
 
 ### Prompt injection in report text
 Report text is delimited in prompts and treated strictly as data. A deterministic
-detector flags override, exfiltration, and forced-fetch patterns, including
-instructions hidden in HTML comments. Flagged reports are routed to
-`blocked_by_policy` and never auto-executed.
+detector flags override, exfiltration, plan-manipulation, and out-of-scope fetch
+attempts, including instructions hidden in HTML comments. Instructions to fetch
+an *in-scope* host are normal reproduction steps and are not flagged; everything
+else still is. Flagged reports are routed to `blocked_by_policy` and never
+auto-executed.
 
 ### Steps that attack out-of-scope hosts
 The deterministic validator rejects any step whose target is not in scope, before
 execution. Destructive methods (`DELETE`) and destructive path patterns are
-blocked outright.
+blocked outright. In addition, the executor enforces the egress allowlist on
+every single request, so even a substituted plan cannot reach an unlisted host.
 
 ### Blind exfiltration and SSRF pivots
 The sandbox is a single-use container with egress restricted at the network level
-to in-scope staging hosts and the self-hosted OOB listener. All other connections
+to in-scope staging hosts and the self-hosted OOB listener; the same policy is
+enforced in-process by the executor. SSRF proof requires a per-run callback token
+generated at `recipe.setup()` time and embedded into the plan by the substitution
+layer — a hit the listener never saw cannot be claimed. All other connections
 are blocked.
 
 ### Credential leakage
@@ -44,8 +50,13 @@ and evidence packs. The executor never reads raw report text.
 Per-run request-count, wall-clock, and per-target rate limits are enforced.
 
 ### Production damage
-Staging is the default target. Execution against production requires manual
-triager approval per report.
+Staging is the default target. Execution against an in-scope production host
+(anything in scope that is not mapped onto staging) requires explicit approval:
+`DESLOP_ALLOW_PRODUCTION`, the program's `allow_production`, or a per-report
+`approve_production` decision recorded in the audit log. Unapproved plans stop
+at the production gate (`needs_human_review`) before any request is sent.
+Every reproduction request carries an `X-Bounty-User: deslop-repro-<run_id>`
+header (configurable) so target-side logs can correlate test traffic.
 
 ### Unauthorized dashboard access
 HTTP Basic auth backed by a PBKDF2 password hash. Every decision is written to the

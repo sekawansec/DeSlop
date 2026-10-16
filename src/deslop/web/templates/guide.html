@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Researcher guide{% endblock %}
+{% block container_class %}container narrow{% endblock %}
+{% block content %}
+<hgroup>
+  <h1>Researcher guide</h1>
+  <p>Every report is replayed against the target. Prose is never accepted as proof.</p>
+</hgroup>
+
+<section>
+  <h2>The rule</h2>
+  <p>Don't tell us it's a bug — show us. Your report is replayed verbatim, so write
+     steps and requests we can execute exactly as given.</p>
+</section>
+
+<section>
+  <h2>What we verify</h2>
+  <table>
+    <thead><tr><th>Bug class</th><th>Proof required</th></tr></thead>
+    <tbody>
+      <tr><td class="mono">idor</td><td>Two accounts. Show the victim's object fetched with the attacker's credentials — both raw requests and responses.</td></tr>
+      <tr><td class="mono">xss_reflected<br>xss_stored</td><td>Exact payload with a unique marker, plus proof it executed: screenshot, console output, or <code>document.domain</code>. For stored XSS, include where it renders.</td></tr>
+      <tr><td class="mono">ssrf</td><td>An out-of-band callback the server actually fetched (interactsh, Burp Collaborator, or similar).</td></tr>
+      <tr><td class="mono">open_redirect</td><td>The redirect parameter and the external destination in the <code>Location</code> header.</td></tr>
+      <tr><td class="mono">command_injection</td><td>The executed command and its output in the response — e.g. <code>id</code>, <code>whoami</code>, <code>/etc/passwd</code> contents.</td></tr>
+      <tr><td class="mono muted">other classes</td><td class="muted">Reviewed manually — include a runnable PoC.</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <h2>A good report</h2>
+  <p><strong>Steps</strong> — numbered, concrete, no filler:</p>
+  <pre>1. Log in as the attacker account (session cookie below)
+2. GET the victim's object: /api/profile/alice
+3. Response contains Alice's private fields, not Bob's</pre>
+  <p><strong>Raw request</strong> — the exact bytes:</p>
+  <pre>GET /api/profile/alice HTTP/1.1
+Host: api.example.com
+Cookie: session=attacker-session-here</pre>
+</section>
+
+<section>
+  <h2>After you submit</h2>
+  <p>You get a private tracking link — keep it. It shows your report's status:
+     received → under review → a decision, plus any questions we send you.
+     If we ask for information, reply on that page; unanswered requests stall the report.</p>
+</section>
+
+<section>
+  <h2>Rules</h2>
+  <ul>
+    <li>Stay in scope. Out-of-scope tests are rejected.</li>
+    <li>Only test with accounts you created. No access to real user data.</li>
+    <li>No destructive testing: no data modification, DoS, or pivoting.</li>
+    <li>You attest that you reproduced it yourself. False claims lead to a ban.</li>
+  </ul>
+  <p><a href="/submit">Submit a report</a></p>
+</section>
+{% endblock %}

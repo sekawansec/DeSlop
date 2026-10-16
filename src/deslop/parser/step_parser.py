@@ -35,20 +35,44 @@ _CANONICAL = {
     "bola": "idor",
     "broken object level": "idor",
     "access control": "idor",
+    "broken access control": "idor",
+    "bac": "idor",
+    "authorization bypass": "idor",
+    "xss": "xss_reflected",
     "xss_reflected": "xss_reflected",
     "reflected xss": "xss_reflected",
+    "cross-site scripting": "xss_reflected",
+    "cross site scripting": "xss_reflected",
     "xss_stored": "xss_stored",
     "stored xss": "xss_stored",
     "persistent xss": "xss_stored",
     "ssrf": "ssrf",
     "server-side request forgery": "ssrf",
+    "server side request forgery": "ssrf",
     "open_redirect": "open_redirect",
     "open redirect": "open_redirect",
+    "unvalidated redirect": "open_redirect",
     "command_injection": "command_injection",
     "command injection": "command_injection",
     "rce": "command_injection",
     "os command": "command_injection",
     "code execution": "command_injection",
+    # Known classes without a v1 recipe -> manual_reproduction_required.
+    "sqli": "sql_injection",
+    "sql injection": "sql_injection",
+    "sql_injection": "sql_injection",
+    "ssti": "ssti",
+    "template injection": "ssti",
+    "csrf": "csrf",
+    "xsrf": "csrf",
+    "lfi": "lfi",
+    "local file inclusion": "lfi",
+    "path traversal": "path_traversal",
+    "xxe": "xxe",
+    "subdomain takeover": "subdomain_takeover",
+    "clickjacking": "clickjacking",
+    "rate limiting": "rate_limiting",
+    "race condition": "race_condition",
 }
 
 
@@ -58,8 +82,15 @@ def canonical_bug_class(raw: str | None) -> str:
     key = raw.strip().lower()
     if key in _CANONICAL:
         return _CANONICAL[key]
-    for needle, canon in _CANONICAL.items():
-        if needle in key:
+    # Longer/more specific needles win over short aliases ("stored xss" must
+    # not be claimed by "xss").
+    for needle, canon in sorted(_CANONICAL.items(), key=lambda kv: -len(kv[0])):
+        if len(needle) <= 4:
+            # Short aliases (bac, rce, lfi, xxe, xss, csrf) must match as a
+            # whole word, not inside a longer token like "tobacco".
+            if re.search(rf"(?<![a-z0-9]){re.escape(needle)}(?![a-z0-9])", key):
+                return canon
+        elif needle in key:
             return canon
     return key
 
@@ -248,6 +279,20 @@ def _extract_marker(report_body: str, bug_class: str) -> str | None:
 
 
 def _pick_account_hint(report_body: str, hints: dict[str, str]) -> str | None:
+    """Choose the test account a report's steps should run as.
+
+    Credentials in the raw request win over prose mentions — for an IDOR the
+    victim's name often appears in the text while the *session* belongs to the
+    attacker.
+    """
+    cred_blob = " ".join(
+        m.lower()
+        for m in re.findall(r"(?:cookie|authorization)\s*:\s*([^\r\n]+)", report_body, re.I)
+    )
+    if cred_blob:
+        for needle, account_id in hints.items():
+            if needle and needle.lower() in cred_blob:
+                return account_id
     lowered = report_body.lower()
     for needle, account_id in hints.items():
         if needle and needle.lower() in lowered:
@@ -256,8 +301,12 @@ def _pick_account_hint(report_body: str, hints: dict[str, str]) -> str | None:
 
 
 def _guess_bug_class(text: str) -> str:
+    """Same matching rules as :func:`canonical_bug_class`, returning 'unknown'."""
     lowered = text.lower()
-    for needle, canon in _CANONICAL.items():
-        if needle in lowered:
+    for needle, canon in sorted(_CANONICAL.items(), key=lambda kv: -len(kv[0])):
+        if len(needle) <= 4:
+            if re.search(rf"(?<![a-z0-9]){re.escape(needle)}(?![a-z0-9])", lowered):
+                return canon
+        elif needle in lowered:
             return canon
     return "unknown"

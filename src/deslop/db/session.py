@@ -62,6 +62,39 @@ def reset_engine() -> None:
     _SessionLocal = None
 
 
+#: Columns added after the initial schema. ``init_db`` backfills them with
+#: ``ALTER TABLE`` when they are missing so existing deployments keep working
+#: without a separate migration runner.
+_LATE_COLUMNS: dict[str, dict[str, str]] = {
+    "reports": {
+        "attestation": "BOOLEAN DEFAULT FALSE",
+        "ai_used": "VARCHAR(16)",
+        "poc_url": "VARCHAR(500)",
+        "production_approved": "BOOLEAN DEFAULT FALSE",
+    },
+    "repro_plans": {
+        "bug_class": "VARCHAR(64)",
+    },
+    "triage_results": {
+        "production_gate": "BOOLEAN DEFAULT FALSE",
+    },
+}
+
+
+def _ensure_columns(engine: Engine) -> None:
+    from sqlalchemy import inspect
+
+    inspector = inspect(engine)
+    with engine.begin() as conn:
+        for table, cols in _LATE_COLUMNS.items():
+            if table not in inspector.get_table_names():
+                continue
+            existing = {c["name"] for c in inspector.get_columns(table)}
+            for name, ddl in cols.items():
+                if name not in existing:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
+
+
 def init_db(settings: Settings | None = None) -> None:
     """Create the pgvector extension (Postgres) and all tables."""
     settings = settings or get_settings()
@@ -70,3 +103,4 @@ def init_db(settings: Settings | None = None) -> None:
         with engine.begin() as conn:
             conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
     Base.metadata.create_all(engine)
+    _ensure_columns(engine)

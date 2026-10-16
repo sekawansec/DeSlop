@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Report received{% endblock %}
+{% block container_class %}container narrow{% endblock %}
+{% block content %}
+<hgroup>
+  <h1>Report received</h1>
+  <p><span class="mono">{{ report_id }}</span> · {{ program_name }}</p>
+</hgroup>
+
+{% if status_url %}
+<p>Save this link. It's shown once and is how you track the report and answer questions.</p>
+<div role="group">
+  <input type="text" id="status-url" value="{{ status_url }}" readonly class="mono">
+  <button type="button" class="secondary" id="copy">Copy</button>
+</div>
+<a role="button" href="{{ status_url }}">Open status page</a>
+{% else %}
+<p>This program has no status page. Keep your report ID for reference.</p>
+{% endif %}
+{% endblock %}
+{% block scripts %}
+<script>
+  document.getElementById("copy")?.addEventListener("click", (e) => {
+    const input = document.getElementById("status-url");
+    input.select();
+    navigator.clipboard?.writeText(input.value);
+    e.target.textContent = "Copied";
+  });
+</script>
+{% endblock %}

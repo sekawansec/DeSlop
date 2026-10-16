@@ -37,6 +37,8 @@ def _submit(client) -> dict:
             "vuln_class": "idor",
             "body": "1. read another user's invoice",
             "raw_http": "GET /api/invoices/1001 HTTP/1.1\nHost: api.lab.test",
+            "attestation": "on",
+            "ai_used": "no",
         },
     )
     assert r.status_code == 201, r.text

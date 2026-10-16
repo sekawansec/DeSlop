@@ -58,6 +58,10 @@ this), and a **deterministic verifier**. Recipes live in
 
 2. **Add a recipe** in `concrete.py` (or a program-specific module) wiring the
    verifier, and any `setup()` needed to bring staging into a known state.
+   `setup(program, run_id=...)` runs before execution and returns a
+   `SetupResult` whose `data` dict reaches the recipe's
+   `verify(..., setup_data=...)` — use it for per-run tokens, seeded object IDs,
+   and ownership markers rather than baking values into the verifier.
 
 3. **Register it** in `register_default_recipes()`.
 

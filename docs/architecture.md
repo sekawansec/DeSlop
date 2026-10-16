@@ -70,6 +70,7 @@ erDiagram
     REPRO_PLAN {
         int id PK
         string report_id FK
+        string bug_class
         json steps
         json substitutions
     }
@@ -94,6 +95,8 @@ erDiagram
         string routing_category
         json suggested_cvss
         bool injection_flag
+        bool production_gate
+        string reply_draft
     }
     AUDIT_LOG {
         int id PK
@@ -124,17 +127,49 @@ how a plan is executed or verified.
 ```python
 class Executor(Protocol):
     name: str
-    def execute(self, plan, program, *, run_id) -> ExecutionResult: ...
+    def execute(
+        self, plan, program, *, run_id=None, egress: EgressPolicy | None = None
+    ) -> ExecutionResult: ...
 
-class Verifier(Protocol):
+class Recipe(Protocol):
     bug_class: str
-    def verify(self, plan, execution, program) -> VerificationResult: ...
+    def setup(self, program, *, run_id) -> SetupResult: ...
+    def verify(
+        self, plan, execution, program, *, setup_data=None
+    ) -> VerificationResult: ...
 ```
 
 v1 ships `WebExecutor` (httpx). A recipe bundles state setup, execution (via an
-executor), and a verifier. Adding a bug class means writing a verifier and
-registering a recipe; adding an executor (Android on-device, desktop) means
-implementing `Executor` without touching the core.
+executor), and a verifier. `setup()` runs before every execution — it is what
+generates per-run OOB tokens (SSRF) and collects ownership markers/canary values
+(IDOR), and its output reaches `verify()` as `setup_data`. Adding a bug class
+means writing a verifier and registering a recipe; adding an executor (Android
+on-device, desktop) means implementing `Executor` without touching the core.
+
+### Pipeline order (authoritative)
+
+1. Injection scan (scope-aware: a fetch aimed at an in-scope host is a normal
+   reproduction step; plan-manipulation phrasing and out-of-scope fetches are
+   always flagged).
+2. Scope check on the declared asset/endpoint. Scope entries accept URL-shaped
+   values — they are normalized to host patterns at load; `*.example.com`
+   covers subdomains only (list the apex separately as `domain`).
+3. Excluded bug class check.
+4. Evidence checklist: per-class deterministic requirements (e.g. SSRF needs an
+   OOB callback address, IDOR needs two accounts). Gaps become reviewer notes
+   and `needs_info` questions — never an auto-reject.
+5. Metadata duplicate check against persisted embeddings.
+6. LLM/offline parsing into a locked plan.
+7. Post-parse duplicate check (merged with the metadata candidates).
+8. Deterministic plan validation (scope per step, no destructive steps).
+9. `recipe.setup()` + optional staging `reset` endpoint call.
+10. Whitelisted substitutions (host map, credentials, per-run OOB token).
+11. Egress gate: every target host must be permitted by the sandbox policy;
+    in-scope production hosts additionally require an approval (setting,
+    program flag, or per-report `approve_production` decision) — otherwise the
+    report is queued as `needs_human_review` with `production_gate` set.
+12. Execution + deterministic verification.
+13. Routing to a queue for a human decision.
 
 ## Routing categories
 
@@ -147,6 +182,7 @@ implementing `Executor` without touching the core.
 | `manual_reproduction_required` | No recipe for the bug class yet. |
 | `out_of_scope` / `excluded_class` / `duplicate` | With reasoning and references. |
 | `blocked_by_policy` | Steps violate policy or injection was detected. |
+| `needs_human_review` | E.g. the plan targets an in-scope production host and awaits an `approve_production` decision. |
 
 No status automatically rejects or closes a report. Internal statuses are never
 shown to researchers.

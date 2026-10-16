@@ -78,6 +78,17 @@ def _cmd_retest(args: argparse.Namespace) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 
+    from .recipes.concrete import register_default_recipes
+
+    register_default_recipes()
+    if args.program_id == "lab":
+        try:
+            from lab.recipes.lab_recipes import register_lab_recipes
+
+            register_lab_recipes()
+        except ImportError:
+            pass
+
     init_db(settings)
     try:
         with session_scope() as session:

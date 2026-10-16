@@ -48,6 +48,9 @@ class Settings(BaseSettings):
     max_run_seconds: int = 120
     rate_limit_rps: float = 5.0
     repro_header: str = "X-Repro-Validator"
+    #: Header stamped on reproduction requests so target-side logs can be
+    #: correlated with the report being verified (value: deslop-repro-<run_id>).
+    bounty_user_header: str = "X-Bounty-User"
     allow_production: bool = False
 
     oob_base_url: str = "http://oob.local:8080"
@@ -96,10 +99,47 @@ class Settings(BaseSettings):
         return self.env.lower() in {"prod", "production"}
 
 
+# Fields the setup wizard persists to ``data/setup.env``. Real environment
+# variables (including compose ``environment:`` entries) always win over the
+# overlay; the overlay only fills values that are unset or empty.
+_OVERLAY_FIELDS = {
+    "DESLOP_DASHBOARD_USER": "dashboard_user",
+    "DESLOP_DASHBOARD_PASSWORD_HASH": "dashboard_password_hash",
+    "DESLOP_LLM_PROVIDER": "llm_provider",
+    "DESLOP_LLM_MODEL": "llm_model",
+    "DESLOP_OOB_BASE_URL": "oob_base_url",
+}
+
+
+def _load_setup_overlay() -> dict[str, str]:
+    """Read the wizard-written ``data/setup.env`` overlay, if present."""
+    import os
+
+    overlay = Path("data/setup.env")
+    updates: dict[str, str] = {}
+    if not overlay.is_file():
+        return updates
+    for line in overlay.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        field = _OVERLAY_FIELDS.get(key)
+        if field is None or os.environ.get(key):
+            continue
+        updates[field] = value.strip()
+    return updates
+
+
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
-    """Return a cached Settings instance."""
-    return Settings()
+    """Return a cached Settings instance.
+
+    Applies the setup-wizard overlay (``data/setup.env``) on top of
+    environment/.env settings so wizard choices survive restarts.
+    """
+    return Settings(**_load_setup_overlay())
 
 
 def reset_settings_cache() -> None:

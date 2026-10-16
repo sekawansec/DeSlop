@@ -28,7 +28,12 @@ def _host_of(url_or_host: str) -> str:
     else:
         # A bare host possibly with a path or port.
         host = value.split("/", 1)[0].split(":", 1)[0]
-    return host.lower().strip(".")
+    host = host.lower().strip(".")
+    # A request target can never literally contain a wildcard; if a researcher
+    # pasted `*.example.com` as the endpoint host, treat it as the apex.
+    if host.startswith("*."):
+        host = host[2:]
+    return host
 
 
 def _domain_matches(host: str, domain: str) -> bool:
@@ -37,12 +42,14 @@ def _domain_matches(host: str, domain: str) -> bool:
 
 
 def _wildcard_matches(host: str, pattern: str) -> bool:
-    # pattern looks like "*.example.com"; matches any subdomain (not the apex).
+    # pattern looks like "*.example.com" and matches subdomains only — the apex
+    # must be listed separately (as a `domain` entry). Conservative on purpose:
+    # when in doubt, deny.
     pattern = pattern.lower().strip(".")
     if not pattern.startswith("*."):
         return False
     base = pattern[2:]
-    return host.endswith("." + base) and host != base
+    return host != base and host.endswith("." + base)
 
 
 def _ip_in_range(host: str, cidr: str) -> bool:
@@ -91,6 +98,17 @@ def check_scope(target: str, program: ProgramConfig) -> ScopeDecision:
     return ScopeDecision(False, None, f"host {host!r} is not in any in-scope rule")
 
 
+def _egress_entry_matches(host: str, entry: str) -> bool:
+    """Match a normalized ``allowed_egress_hosts`` entry against a host.
+
+    Entries are normalized at config load to bare hosts or ``*.domain``
+    patterns; a bare entry covers the host itself and its subdomains.
+    """
+    if entry.startswith("*."):
+        return _wildcard_matches(host, entry)
+    return _domain_matches(host, entry)
+
+
 def is_allowed_egress_host(host: str, program: ProgramConfig) -> bool:
     """Whether the sandbox may open a raw connection to ``host``.
 
@@ -98,10 +116,10 @@ def is_allowed_egress_host(host: str, program: ProgramConfig) -> bool:
     addition to configured ``allowed_egress_hosts``.
     """
     host = host.lower().strip(".")
-    allowed = {h.lower().strip(".") for h in program.allowed_egress_hosts}
+    entries = list(program.allowed_egress_hosts)
     staging_host = _host_of(program.staging.base_url)
     if staging_host:
-        allowed.add(staging_host)
+        entries.append(staging_host)
     for value in program.staging.host_map.values():
-        allowed.add(_host_of(value))
-    return host in allowed
+        entries.append(value.split(":", 1)[0])
+    return any(_egress_entry_matches(host, e) for e in entries)

@@ -7,13 +7,16 @@ is intentional: it is the first slop filter.
 
 from __future__ import annotations
 
+from urllib.parse import urlparse
+
 from fastapi import APIRouter, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from ..config.loader import ProgramRegistry
 from ..db.session import session_scope
 from ..intake.abuse import get_blacklist, get_intake_limiter
 from .app import templates
+from .http import wants_html
 from .service import create_report, run_pipeline_for_report
 
 router = APIRouter()
@@ -23,11 +26,52 @@ def _registry(request: Request) -> ProgramRegistry:
     return request.app.state.registry
 
 
+_YOUTUBE_HOSTS = {"youtube.com", "youtu.be"}
+
+
+def _is_youtube_url(value: str) -> bool:
+    """Accept only real YouTube hosts (watch, shorts, live, youtu.be shares)."""
+    url = value.strip()
+    if not url.startswith(("http://", "https://")):
+        url = "https://" + url
+    try:
+        host = (urlparse(url).hostname or "").lower()
+    except ValueError:
+        return False
+    return host in _YOUTUBE_HOSTS or host.endswith(".youtube.com")
+
+
+@router.get("/guide", response_class=HTMLResponse)
+def guide(request: Request) -> HTMLResponse:
+    return templates.TemplateResponse(request, "guide.html", {"active": "guide"})
+
+
 @router.get("/submit", response_class=HTMLResponse)
 def submit_form(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(
-        request, "submit.html", {"programs": list(_registry(request)), "active": "submit"}
+        request,
+        "submit.html",
+        {"programs": list(_registry(request)), "active": "submit", "form": {}},
     )
+
+
+def _submit_error(
+    request: Request, detail: str, form: dict, status_code: int = 422
+) -> Response:
+    """Re-render the form with an error for browsers; JSON for API clients."""
+    if wants_html(request):
+        return templates.TemplateResponse(
+            request,
+            "submit.html",
+            {
+                "programs": list(_registry(request)),
+                "active": "submit",
+                "error": detail,
+                "form": form,
+            },
+            status_code=status_code,
+        )
+    raise HTTPException(status_code=status_code, detail=detail)
 
 
 @router.post("/submit")
@@ -45,10 +89,26 @@ def submit(
     raw_http: str | None = Form(None),
     har: str | None = Form(None),
     poc: str | None = Form(None),
-) -> JSONResponse:
+    poc_video: str | None = Form(None),
+    attestation: str | None = Form(None),
+    ai_used: str | None = Form(None),
+) -> Response:
     registry = _registry(request)
+    # Repopulate the form on validation errors so researchers do not lose work.
+    form = {
+        "program_id": program_id, "title": title, "asset": asset,
+        "vuln_class": vuln_class, "body": body, "endpoint": endpoint,
+        "claimed_severity": claimed_severity, "researcher": researcher,
+        "researcher_email": researcher_email, "raw_http": raw_http,
+        "har": har, "poc": poc, "poc_video": poc_video,
+        "attestation": attestation, "ai_used": ai_used,
+    }
+    if poc_video and poc_video.strip() and not _is_youtube_url(poc_video):
+        return _submit_error(
+            request, "PoC video must be a YouTube link", form
+        )
     if program_id not in registry:
-        raise HTTPException(status_code=404, detail="unknown program")
+        return _submit_error(request, "unknown program", form, status_code=404)
 
     settings = request.app.state.settings
 
@@ -60,12 +120,16 @@ def submit(
         blocked_email = blacklist.is_blocked(researcher_email or "")
         if blocked_ip or blocked_email:
             entry = blocked_ip or blocked_email
-            raise HTTPException(
+            return _submit_error(
+                request,
+                f"submission blocked ({entry.kind}: {entry.reason or 'blacklisted'})",
+                form,
                 status_code=403,
-                detail=f"submission blocked ({entry.kind}: {entry.reason or 'blacklisted'})",
             )
     if not get_intake_limiter(settings).allow(client_ip):
-        raise HTTPException(status_code=429, detail="too many submissions; slow down")
+        return _submit_error(
+            request, "too many submissions; slow down", form, status_code=429
+        )
 
     evidence = []
     if raw_http and raw_http.strip():
@@ -76,9 +140,18 @@ def submit(
         evidence.append({"name": "poc.txt", "kind": "poc", "content": poc})
 
     if not evidence or not body.strip():
-        raise HTTPException(
-            status_code=422,
-            detail="a raw HTTP request, HAR file, or runnable PoC is required, plus reproduction steps",
+        return _submit_error(
+            request,
+            "a raw HTTP request, HAR file, or runnable PoC is required, plus reproduction steps",
+            form,
+        )
+    # Attestation is recorded, not trusted: a false attestation is grounds for
+    # a ban, which is what gives it weight.
+    if not attestation:
+        return _submit_error(
+            request,
+            "attestation required: confirm you reproduced this yourself",
+            form,
         )
 
     program = registry.get(program_id)
@@ -95,22 +168,42 @@ def submit(
             vuln_class=vuln_class,
             claimed_severity=claimed_severity,
             attachments=evidence,
+            attestation=True,
+            ai_used=ai_used if ai_used in {"yes", "no"} else None,
+            poc_url=poc_video.strip() if poc_video and poc_video.strip() else None,
         )
         payload = {"report_id": report.id, "public_status": report.public_status}
-        if token and program.status_page.base_url:
+        status_url = None
+        if token:
             from .status_token import IssuedToken
 
-            payload["status_url"] = IssuedToken(
+            # Fall back to the request's own origin when the program does not
+            # configure a public base URL, so every program is trackable.
+            base = program.status_page.base_url or str(request.base_url).rstrip("/")
+            status_url = IssuedToken(
                 token=token, token_hash="", expires_at=report.status_token_expires_at
-            ).status_url(program.status_page.base_url)
+            ).status_url(base)
+            payload["status_url"] = status_url
         # Run the pipeline (parse -> validate -> reproduce -> verify -> route) so
-        # the report is triaged immediately.
+        # the report is triaged immediately. Internal routing/verdict are never
+        # returned to the researcher — they only get the public status page.
         try:
-            summary = run_pipeline_for_report(session, report, program)
-            payload["routing"] = summary.routing_category
-            payload["verdict"] = summary.verdict
+            run_pipeline_for_report(session, report, program)
         except Exception as exc:  # noqa: BLE001 - never fail intake on pipeline error
             import logging
 
             logging.getLogger("deslop.web").warning("pipeline run failed: %s", exc)
+
+    if wants_html(request):
+        return templates.TemplateResponse(
+            request,
+            "submitted.html",
+            {
+                "report_id": report.id,
+                "status_url": status_url,
+                "program_name": program.name,
+                "active": "submit",
+            },
+            status_code=201,
+        )
     return JSONResponse(payload, status_code=201)

@@ -6,7 +6,6 @@ real verifier parameters (the lab's marker domain, the OOB run token).
 
 from __future__ import annotations
 
-import secrets
 from dataclasses import dataclass, field
 
 from deslop.config.schema import ProgramConfig
@@ -18,7 +17,6 @@ from deslop.recipes.concrete import (
     StoredXssRecipe,
 )
 from deslop.recipes.registry import SetupResult, register_recipe
-from deslop.repro.interfaces import ExecutionResult, VerificationResult
 
 #: Ownership markers present in the lab app's invoice data. These are what the
 #: IDOR verifier looks for in a response returned to a different account.
@@ -35,7 +33,9 @@ class LabIdorRecipe(IdorRecipe):
     owner_markers: list[str] = field(default_factory=lambda: list(LAB_OWNER_MARKERS))
 
     def setup(self, program: ProgramConfig, *, run_id: str) -> SetupResult:
-        return SetupResult(ok=True, detail="lab idor setup", data={"markers": self.owner_markers})
+        result = super().setup(program, run_id=run_id)
+        result.detail = "lab idor setup"
+        return result
 
 
 @dataclass
@@ -43,13 +43,9 @@ class LabSsrfRecipe(SsrfRecipe):
     bug_class: str = "ssrf"
 
     def setup(self, program: ProgramConfig, *, run_id: str) -> SetupResult:
-        token = secrets.token_hex(16)
-        return SetupResult(ok=True, detail="lab ssrf setup", data={"run_token": token})
-
-    def verify(self, plan, execution: ExecutionResult, program: ProgramConfig) -> VerificationResult:  # noqa: ANN001
-        from deslop.recipes.ssrf import SsrfVerifier
-
-        return SsrfVerifier(run_token=self.run_token).verify(plan, execution, program)
+        result = super().setup(program, run_id=run_id)
+        result.detail = "lab ssrf setup"
+        return result
 
 
 def register_lab_recipes() -> None:

@@ -56,16 +56,25 @@ _EXFIL = [
     r"(aws|gcp|azure)\s+(credentials|metadata|token)",
 ]
 
-_FORCE_FETCH = [
+# Fetch patterns whose host is checked against scope: telling the pipeline to
+# fetch an in-scope URL is a normal reproduction step, not an injection.
+_SCOPEABLE_FETCH = [
     r"(fetch|request|visit|call|hit|curl|wget)\s+https?://",
     r"send\s+(a\s+)?request\s+to\s+https?://",
+]
+
+# Plan manipulation is always suspicious regardless of the target host — a
+# reproduction step is written by the researcher, not added on demand.
+_FORCE_FETCH = [
     r"add\s+a\s+step\s+(that\s+)?(sends?|requests?|fetches?)",
+    r"(inject|insert|append)\s+(a\s+)?(new\s+|extra\s+)?step",
 ]
 
 _COMPILED = [
     ("instruction_override", re.compile("|".join(_INSTRUCTION_OVERRIDE), re.I)),
     ("exfiltration", re.compile("|".join(_EXFIL), re.I)),
     ("forced_fetch", re.compile("|".join(_FORCE_FETCH), re.I)),
+    ("scoped_fetch", re.compile("|".join(_SCOPEABLE_FETCH), re.I)),
 ]
 
 
@@ -75,19 +84,57 @@ def _snippet(text: str, match: re.Match) -> str:
     return text[start:end].replace("\n", " ").strip()
 
 
-def detect_injection(text: str, *, extra_hosts: list[str] | None = None) -> InjectionReport:
-    """Scan untrusted text for prompt-injection and out-of-scope-fetch attempts."""
+_URL_AFTER_RE = re.compile(r"https?://[^\s)\"'<>\\]+")
+
+
+def _fetch_target_host(text: str, match: re.Match) -> str | None:
+    """Extract the host of the URL a forced-fetch pattern points at."""
+    tail = text[match.start() : match.end() + 300]
+    m = _URL_AFTER_RE.search(tail)
+    if not m:
+        return None
+    from urllib.parse import urlparse
+
+    return (urlparse(m.group(0)).hostname or "").lower()
+
+
+def detect_injection(
+    text: str,
+    *,
+    extra_hosts: list[str] | None = None,
+    in_scope=None,  # noqa: ANN001 - callable(host: str) -> bool
+) -> InjectionReport:
+    """Scan untrusted text for prompt-injection and out-of-scope-fetch attempts.
+
+    ``in_scope`` is an optional predicate used to suppress ``scoped_fetch``
+    findings aimed at in-scope hosts — telling the pipeline to fetch the target
+    is a normal reproduction step, not an injection. Fetches pointing outside
+    scope are still flagged as ``forced_fetch``, and plan-manipulation phrases
+    ("add a step that sends requests to ...") are always flagged.
+    """
     findings: list[InjectionFinding] = []
     for category, pattern in _COMPILED:
         for match in pattern.finditer(text):
+            cat = category
+            if cat == "scoped_fetch":
+                host = _fetch_target_host(text, match)
+                if host and in_scope is not None and in_scope(host):
+                    continue
+                cat = "forced_fetch"
             findings.append(
-                InjectionFinding(category=category, pattern=match.re.pattern, snippet=_snippet(text, match))
+                InjectionFinding(category=cat, pattern=match.re.pattern, snippet=_snippet(text, match))
             )
 
     # HTML comments are a common hiding place for injected instructions.
     for comment in re.findall(r"<!--(.*?)-->", text, re.S):
         for category, pattern in _COMPILED:
             for match in pattern.finditer(comment):
+                cat = category
+                if cat == "scoped_fetch":
+                    host = _fetch_target_host(comment, match)
+                    if host and in_scope is not None and in_scope(host):
+                        continue
+                    cat = "forced_fetch"
                 findings.append(
                     InjectionFinding(
                         category=f"hidden_comment:{category}",

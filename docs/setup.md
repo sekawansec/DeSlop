@@ -65,6 +65,23 @@ installed, DeSlop degrades to a deterministic hashing embedder so nothing breaks
 2. Edit scope, staging host map, test accounts, bounty table, and replies.
 3. Drop it in `config/programs/`. The `id` field inside the file is authoritative.
 
+Notes on policy fields:
+
+- `in_scope`/`out_of_scope` entries accept `domain` (apex + subdomains),
+  `wildcard` (`*.example.com`, subdomains only), `ip_range`, `url`, `app_id`.
+  URL-shaped values are normalized to host patterns automatically.
+- `allowed_egress_hosts` lists staging-side hosts the executor may reach (the
+  staging `base_url` and `host_map` targets are always allowed). Bare hosts
+  cover their subdomains; `*.domain` is supported; URL values are reduced to
+  their host.
+- `allow_production: false` (default) keeps reproduction off production hosts;
+  a triager can still approve it per report (`approve_production` decision).
+- `canary` — `{enabled, token, required_for: [bug classes]}`. Plant the token in
+  staging; claims in the listed classes that never surface it get a reviewer
+  note.
+- `evidence_requirements` — per-class checklist overrides
+  (`{bug_class, expect: [check names]}`), see `deslop.intake.evidence`.
+
 ## Staging environment (required for reproduction)
 
 - A staging environment with dummy data, separate from production.
