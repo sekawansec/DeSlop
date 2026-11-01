@@ -2,9 +2,8 @@
 
 ## Reporting a vulnerability
 
-Please report security issues in DeSlop privately to:
-
-**security@example.com** _(placeholder — to be replaced before release)_
+Please report security issues in DeSlop privately through GitHub Security
+Advisories ("Report a vulnerability" on the repository's Security tab).
 
 Please include:
 
