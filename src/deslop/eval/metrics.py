@@ -21,6 +21,7 @@ class ReportOutcome:
     verdict: str | None
     injection_flagged: bool
     latency_ms: int = 0
+    correct: bool = False
 
 
 @dataclass
@@ -86,6 +87,7 @@ def score(
     latencies = latencies or {}
     metrics = EvalMetrics(total=len(results))
     for report, predicted, verdict, injection_flagged in results:
+        correct = predicted == expected_category(report)
         metrics.outcomes.append(
             ReportOutcome(
                 report_id=report.id,
@@ -94,9 +96,10 @@ def score(
                 verdict=verdict,
                 injection_flagged=injection_flagged,
                 latency_ms=latencies.get(report.id, 0),
+                correct=correct,
             )
         )
-        if predicted == expected_category(report):
+        if correct:
             metrics.routing_correct += 1
 
         is_reproducible = report.label in REPRODUCIBLE_LABELS

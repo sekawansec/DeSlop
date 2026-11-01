@@ -1,4 +1,4 @@
-"""Demo scenario for Black Hat Arsenal.
+"""Demo scenario for DeSlop.
 
 Feeds a mix of synthetic reports through the pipeline and prints the sorting
 result with evidence.
@@ -6,6 +6,7 @@ result with evidence.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 from .config.loader import ProgramRegistry
@@ -14,6 +15,7 @@ from .dataset import generate_dataset
 from .dedup.detector import NormalizedReport
 from .llm.embeddings import HashingEmbedder
 from .pipeline.orchestrator import Pipeline
+from .recipes.bootstrap import register_recipes_for
 
 _CATEGORY_ORDER = [
     "reproduced",
@@ -27,23 +29,6 @@ _CATEGORY_ORDER = [
     "blocked_by_policy",
     "failed_replay",
 ]
-
-
-def _ensure_recipes(program_id: str) -> None:
-    if program_id == "lab":
-        try:
-            from lab.recipes.lab_recipes import register_lab_recipes
-
-            register_lab_recipes()
-        except ImportError:
-            pass
-    elif program_id == "dvwa":
-        try:
-            from lab.recipes.dvwa_recipes import register_dvwa_recipes
-
-            register_dvwa_recipes()
-        except ImportError:
-            pass
 
 
 def _build_corpus(reports, settings: Settings) -> list[NormalizedReport]:
@@ -77,7 +62,11 @@ def run_demo(
     max_reports: int | None = None,
 ) -> int:
     program = ProgramRegistry.from_dir(config_dir).get(program_id)
-    _ensure_recipes(program_id)
+    try:
+        register_recipes_for(program_id)
+    except ImportError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
     if program_id == "dvwa":
         from lab.recipes.dvwa_recipes import build_dvwa_dataset
 

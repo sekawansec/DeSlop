@@ -115,54 +115,105 @@ def make_excluded_class(report_id: str) -> SyntheticReport:
     )
 
 
+# Slop reports carry plausible-looking raw HTTP evidence — enough to pass
+# intake and reach the executor — but the claimed effect does not actually
+# happen. They exercise the path that matters most: convincing reports that
+# must come back unproven.
 _SLOP_TEMPLATES = [
     (
-        "Critical authentication bypass via JWT confusion",
-        "I discovered a critical authentication bypass. The application accepts "
-        "alg=none JWTs, allowing full account takeover. Simply craft a token and "
-        "access any endpoint. I have not included a raw request but the issue is "
-        "obvious from the design.",
+        "IDOR: invoice endpoint exposes other users' billing data",
+        "Logged in as bob, I can read invoice records that do not belong to me. "
+        "The request below returns another user's invoice object, which I "
+        "interpret as broken access control.",
+        "## Steps to reproduce\n"
+        "1. Log in as bob.\n"
+        "2. Send the attached request.\n"
+        "3. The response contains invoice data.\n\n"
+        "## Evidence\n```http\n"
+        "GET /api/invoices/1002 HTTP/1.1\n"
+        "Host: api.lab.test\n"
+        "Cookie: lab_session=<session of bob>\n```\n"
+        "The response shows a full invoice record.",
         "api.lab.test",
-        "/api/me",
+        "/api/invoices/1002",
+        IDOR,
+        "claims IDOR but only fetches the requester's own invoice",
     ),
     (
-        "Remote code execution through image upload",
-        "The image upload feature permits RCE. By uploading a crafted payload with "
-        "a double extension the server executes arbitrary code. This is guaranteed "
-        "to work in production.",
-        "www.lab.test",
-        "/api/upload",
-    ),
-    (
-        "SQL injection in the login form (blind, time-based)",
-        "The login form is vulnerable to time-based blind SQL injection. Waiting "
-        "several seconds returns different results. No payload given as it may be "
-        "destructive.",
+        "Reflected XSS via search parameter",
+        "The q parameter reflects my payload and the script executes — I saw "
+        "the marker in my browser. Payload: "
+        "<script>document.title='XSS_FAKE_MARKER'</script>.",
+        "## Steps to reproduce\n"
+        "1. Send the request below with the payload in q.\n"
+        "2. The script executes on render.\n\n"
+        "## Evidence\n```http\n"
+        "GET /api/fetch?q=%3Cscript%3Edocument.title%3D%27XSS_FAKE_MARKER%27%3C%2Fscript%3E "
+        "HTTP/1.1\nHost: api.lab.test\n```\n"
+        "Observe document.title becomes XSS_FAKE_MARKER.",
         "api.lab.test",
-        "/api/login",
+        "/api/fetch",
+        XSS_REFLECTED,
+        "payload sent to a JSON endpoint that never renders HTML",
     ),
     (
-        "Subdomain takeover on a forgotten DNS record",
-        "A dangling CNAME points to a third-party service that is unclaimed, "
-        "enabling subdomain takeover. I did not register it but it is clearly "
-        "exploitable.",
-        "dev.lab.test",
-        "/",
+        "Blind SSRF to internal metadata service",
+        "The fetch endpoint reached an internal service on my behalf. I "
+        "observed timing differences consistent with an internal hit.",
+        "## Steps to reproduce\n"
+        "1. Send the request below.\n"
+        "2. The server fetches the internal URL.\n\n"
+        "## Evidence\n```http\n"
+        "GET /api/fetch?url=http://10.255.255.1:1/internal HTTP/1.1\n"
+        "Host: api.lab.test\n```\n"
+        "The delayed response proves the internal request was made.",
+        "api.lab.test",
+        "/api/fetch",
+        SSRF,
+        "claims an internal hit with no OOB callback proof",
     ),
     (
-        "Prototype pollution leading to XSS",
-        "Client-side prototype pollution in the app leads to XSS. The gadget exists "
-        "somewhere in the bundle. No steps provided because it is self-evident to "
-        "an experienced researcher.",
+        "Stored XSS through the comment board",
+        "My stored payload executes whenever the comments page is viewed — "
+        "the marker document.title='XSS_STORED_FAKE' appears in my browser.",
+        "## Steps to reproduce\n"
+        "1. Post the comment.\n"
+        "2. Open /comments; the payload runs.\n\n"
+        "## Evidence\n```http\n"
+        "POST /api/comments HTTP/1.1\n"
+        "Host: www.lab.test\n"
+        "Content-Type: application/x-www-form-urlencoded\n\n"
+        "author=me&text=great%20site%20thanks\n```\n\n"
+        "```http\nGET /comments HTTP/1.1\nHost: www.lab.test\n```",
         "www.lab.test",
-        "/",
+        "/comments",
+        XSS_STORED,
+        "posts harmless text while claiming a stored marker executes",
+    ),
+    (
+        "Open redirect to attacker domain",
+        "The redirect endpoint forwards users to my external domain, enabling "
+        "phishing. I was sent to attacker.example after login.",
+        "## Steps to reproduce\n"
+        "1. Open the URL below.\n"
+        "2. Observe the 302 to the external domain.\n\n"
+        "## Evidence\n```http\n"
+        "GET /redirect?next=/home HTTP/1.1\n"
+        "Host: www.lab.test\n```\n"
+        "The response redirects off-site.",
+        "www.lab.test",
+        "/redirect",
+        OPEN_REDIRECT,
+        "claims external redirect but the request points on-site",
     ),
 ]
 
 
 def make_slop(report_id: str, pick: int) -> SyntheticReport:
-    title, text, asset, endpoint = _SLOP_TEMPLATES[pick % len(_SLOP_TEMPLATES)]
-    body = f"## Summary\n{text}\n"
+    title, summary, steps, asset, endpoint, vuln_class, note = _SLOP_TEMPLATES[
+        pick % len(_SLOP_TEMPLATES)
+    ]
+    body = f"## Summary\n{summary}\n\n{steps}\n"
     return SyntheticReport(
         id=report_id,
         label=Label.SLOP,
@@ -170,10 +221,10 @@ def make_slop(report_id: str, pick: int) -> SyntheticReport:
         body=body,
         asset=asset,
         endpoint=endpoint,
-        vuln_class="unknown",
+        vuln_class=vuln_class,
         claimed_severity="critical",
         reproducible=False,
-        notes="convincing but non-reproducible",
+        notes=f"convincing but non-reproducible: {note}",
     )
 
 

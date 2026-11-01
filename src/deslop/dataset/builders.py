@@ -108,11 +108,12 @@ def build_stored_xss(report_id: str) -> SyntheticReport:
         "2. Open the comments page in a browser.\n"
         "3. The script executes and sets the page title to XSS_STORED_MARKER.\n\n"
         "## Evidence\n"
-        "Raw request:\n\n```http\n"
+        "Raw requests — store the payload, then view the page it renders on:\n\n```http\n"
         "POST /api/comments HTTP/1.1\n"
         "Host: www.lab.test\n"
         "Content-Type: application/x-www-form-urlencoded\n\n"
-        "author=attacker&text=<script>document.title='XSS_STORED_MARKER'</script>\n```\n"
+        "author=attacker&text=<script>document.title='XSS_STORED_MARKER'</script>\n```\n\n"
+        "```http\nGET /comments HTTP/1.1\nHost: www.lab.test\n```\n"
     )
     return SyntheticReport(
         id=report_id,

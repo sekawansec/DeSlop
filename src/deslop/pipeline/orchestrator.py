@@ -368,33 +368,28 @@ class Pipeline:
         return result
 
 
+#: Typical impact per bug class, used only for metrics the report text does not
+#: state itself, so a terse report does not score 0.0.
+_CLASS_BASELINE: dict[str, dict[str, str]] = {
+    "idor": {"AV": "N", "C": "H"},
+    "ssrf": {"AV": "N", "C": "H"},
+    "xss_reflected": {"AV": "N", "UI": "R", "C": "L", "I": "L"},
+    "xss_stored": {"AV": "N", "UI": "R", "C": "L", "I": "L"},
+    "open_redirect": {"AV": "N", "UI": "R"},
+    "command_injection": {"AV": "N", "C": "H", "I": "H", "A": "H"},
+}
+
+
 def _suggest_cvss(body: str, bug_class: str, verification) -> dict | None:  # noqa: ANN001
-    """Compute a provisional CVSS v3.1 base score from the report and verdict."""
-    from ..cvss import compute_base, vector_from_text
+    """Provisional CVSS v3.1 base score. The calculator is exact; its inputs are
+    heuristic (keywords in the report, then a per-class baseline), so the result
+    is labelled ``heuristic`` and is a starting point for the triager, not a rating."""
+    from ..cvss import CvssMetrics, compute_base, hints_from_text
 
     try:
-        metrics = vector_from_text(body)
-        # Bias the metrics by bug class where the impact is well understood, so a
-        # proven high-impact bug does not score 0 just because the prose was terse.
-        if bug_class in {"idor", "ssrf"}:
-            metrics.AV = "N"
-            metrics.C = "H"
-        elif bug_class in {"xss_reflected", "xss_stored"}:
-            metrics.AV = "N"
-            metrics.UI = "R"
-            metrics.C = "L"
-            metrics.I = "L"
-        elif bug_class == "open_redirect":
-            metrics.AV = "N"
-            metrics.UI = "R"
-        elif bug_class == "command_injection":
-            metrics.AV = "N"
-            metrics.C = "H"
-            metrics.I = "H"
-            metrics.A = "H"
-        result = compute_base(metrics)
-        payload = result.to_dict()
-        payload["source"] = "deterministic"
+        metrics = CvssMetrics(**{**_CLASS_BASELINE.get(bug_class, {}), **hints_from_text(body)})
+        payload = compute_base(metrics).to_dict()
+        payload["source"] = "heuristic"
         payload["proven"] = bool(verification and verification.verdict.value == "proven")
         return payload
     except Exception:  # noqa: BLE001 - CVSS is a suggestion, never fatal

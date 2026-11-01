@@ -140,10 +140,15 @@ _KEYWORDS: list[tuple[re.Pattern[str], str, str]] = [
 ]
 
 
-def vector_from_text(text: str) -> CvssMetrics:
-    """Derive a provisional metric set from descriptive text (best effort)."""
-    metrics = CvssMetrics()
+def hints_from_text(text: str) -> dict[str, str]:
+    """Metric values the text explicitly suggests (best effort)."""
+    hints: dict[str, str] = {}
     for pattern, attr, value in _KEYWORDS:
         if pattern.search(text):
-            setattr(metrics, attr, value)
-    return metrics
+            hints[attr] = value
+    return hints
+
+
+def vector_from_text(text: str) -> CvssMetrics:
+    """Derive a provisional metric set from descriptive text (best effort)."""
+    return CvssMetrics(**hints_from_text(text))

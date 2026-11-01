@@ -57,6 +57,7 @@ def _per_label(metrics: EvalMetrics) -> dict[str, dict[str, int]]:
     for o in metrics.outcomes:
         row = out.setdefault(o.label, {"total": 0, "correct": 0})
         row["total"] += 1
+        row["correct"] += int(o.correct)
     return out
 
 
@@ -83,7 +84,7 @@ def evaluate(
 
     embed = embed or default_embed
 
-    # Build normalized representations for duplicate detection (Stage 7 signal).
+    # Build normalized representations for duplicate detection.
     normalized: list[NormalizedReport] = []
     models: dict[str, ReportModelOutput] = {}
     for r in reports:
