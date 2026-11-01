@@ -32,6 +32,16 @@ data/
 evidence/
 runs/
 
+# Program configs are deployment-specific. Only the shipped examples and lab
+# targets stay tracked; your own program YAMLs do not belong in the repo.
+config/programs/*.yaml
+!config/programs/example-acme-cloud.yaml
+!config/programs/lab.yaml
+!config/programs/dvwa.yaml
+config/container/*.yaml
+!config/container/lab.yaml
+!config/container/dvwa.yaml
+
 # Setup wizard / runtime state
 setup.env
 setup.json

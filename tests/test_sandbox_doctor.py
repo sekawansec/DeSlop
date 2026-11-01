@@ -1,6 +1,6 @@
 from deslop.config.schema import ProgramConfig, StagingConfig, TestAccount
 from deslop.doctor import CheckResult, CheckStatus, run_doctor
-from deslop.sandbox.policy import build_egress_policy, build_sandbox_spec, host_of
+from deslop.sandbox.policy import build_egress_policy, host_of
 
 
 def _program(**overrides):
@@ -32,13 +32,6 @@ def test_egress_policy_includes_staging_and_oob():
     assert policy.permits("staging.demo.test")
     assert policy.permits("oob")
     assert not policy.permits("evil.test")
-
-
-def test_sandbox_spec_args():
-    spec = build_sandbox_spec(_program(), "http://oob:8080")
-    args = spec.docker_run_args()
-    assert "run" in args and "--rm" in args
-    assert "deslop-sandbox" in args
 
 
 def test_doctor_ok_with_network_skipped():

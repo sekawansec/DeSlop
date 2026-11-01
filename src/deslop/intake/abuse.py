@@ -1,8 +1,7 @@
 """Intake anti-abuse: per-IP rate limiting and an email/IP blacklist.
 
 The blacklist is a small JSON file so it survives restarts and can be edited by
-hand or by a triager. Entries can be permanent or time-limited ("temporary
-block" like Gerobug's email blacklisting).
+hand or by a triager. Entries can be permanent or time-limited.
 """
 
 from __future__ import annotations

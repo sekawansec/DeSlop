@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,8 +8,9 @@ version = "0.1.0"
 description = "A self-hosted gatekeeper for VDP and bug bounty intake that filters AI slop and proves reports with evidence."
 readme = "README.md"
 requires-python = ">=3.12"
-license = { text = "Apache-2.0 OR AGPL-3.0" }
 authors = [{ name = "Abdullah Mudzakir" }]
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
 keywords = ["vdp", "bug-bounty", "security", "self-hosted", "triage", "reproduction"]
 classifiers = [
     "Programming Language :: Python :: 3.12",
@@ -27,6 +28,7 @@ deslop = ["web/templates/**/*", "web/static/**/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
 addopts = "-q"
 asyncio_mode = "auto"
 filterwarnings = ["ignore::DeprecationWarning"]

@@ -55,7 +55,7 @@ def retrieve_candidates(
     corpus: list[NormalizedReport],
     rules: DuplicateRules,
 ) -> list[Candidate]:
-    """Stage 2: vector similarity + asset/endpoint boost."""
+    """Vector similarity plus asset/endpoint boost."""
     scored: list[Candidate] = []
     for other in corpus:
         if other.report_id == target.report_id:

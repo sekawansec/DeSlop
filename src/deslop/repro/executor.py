@@ -109,7 +109,7 @@ class WebExecutor:
 
         run_id = run_id or uuid.uuid4().hex
         result = ExecutionResult(run_id=run_id, bug_class=plan.bug_class)
-        limiter = RateLimiter(program_max_rps(self.settings, program))
+        limiter = RateLimiter(self.settings.rate_limit_rps)
         max_requests = program.max_requests_per_run or self.settings.max_requests_per_run
         started = time.monotonic()
         sessions: dict[str, Session] = {}
@@ -217,7 +217,3 @@ class WebExecutor:
 
         result.duration_ms = int((time.monotonic() - started) * 1000)
         return result
-
-
-def program_max_rps(settings: Settings, program: ProgramConfig) -> float:
-    return settings.rate_limit_rps

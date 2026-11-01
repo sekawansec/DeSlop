@@ -1,4 +1,4 @@
-"""Tests for the Gerobug-inspired features: init, CVSS, blacklist, roles, notify."""
+"""Tests for init, CVSS estimation, the abuse blacklist, roles, and notify."""
 
 from __future__ import annotations
 
@@ -91,11 +91,25 @@ def test_pipeline_cvss_bias_for_idor():
     assert payload["severity"] in {"medium", "high", "critical"}
 
 
+def test_pipeline_cvss_is_labelled_heuristic():
+    from deslop.pipeline.orchestrator import _suggest_cvss
+
+    assert _suggest_cvss("read another user's invoice", "idor", None)["source"] == "heuristic"
+
+
+def test_pipeline_cvss_report_text_wins_over_class_baseline():
+    from deslop.pipeline.orchestrator import _suggest_cvss
+
+    default = _suggest_cvss("reflected payload fires", "xss_reflected", None)
+    assert "UI:R" in default["vector"]
+    stated = _suggest_cvss("fires with no user interaction", "xss_reflected", None)
+    assert "UI:N" in stated["vector"]
+
+
 # ----------------------------------------------------------------- init
 def test_generate_env_contains_secrets_and_password():
     contents, password = generate_env(dashboard_password="s3cret", llm_provider="none")
     assert password == "s3cret"
-    assert "DESLOP_SECRET_KEY=" in contents
     assert "DESLOP_DASHBOARD_PASSWORD_HASH=" in contents
     # The plaintext password must not appear in the file.
     assert "s3cret" not in contents

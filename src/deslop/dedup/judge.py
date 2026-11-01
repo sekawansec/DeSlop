@@ -1,4 +1,4 @@
-"""Stage 3 duplicate detection: LLM judgement of retrieved candidates.
+"""Duplicate detection: LLM judgement of retrieved candidates.
 
 Each candidate is presented in condensed form and classified as
 same_root_cause / same_asset_different_bug / unrelated. When no LLM is
@@ -32,7 +32,7 @@ def judge_candidates(
     program: ProgramConfig,
     client: LLMClient | None = None,
 ) -> list[Candidate]:
-    """Stage 3: classify each candidate. Mutates and returns the candidate list."""
+    """Classify each candidate. Mutates and returns the candidate list."""
     if not candidates:
         return candidates
 

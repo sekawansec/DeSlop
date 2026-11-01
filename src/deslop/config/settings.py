@@ -27,7 +27,6 @@ class Settings(BaseSettings):
     )
 
     env: str = "dev"
-    secret_key: str = "change-me"
     database_url: str = "sqlite+pysqlite:///./deslop.db"
     config_dir: Path = Path("./config/programs")
 
@@ -43,7 +42,6 @@ class Settings(BaseSettings):
     embedding_model: str = "BAAI/bge-m3"
     embedding_dim: int = 1024
 
-    sandbox_enabled: bool = True
     max_requests_per_run: int = 50
     max_run_seconds: int = 120
     rate_limit_rps: float = 5.0

@@ -39,5 +39,7 @@ def test_env_example_is_loadable():
             keys.add(line.split("=", 1)[0])
     assert "DESLOP_DATABASE_URL" in keys
     assert "DESLOP_LLM_PROVIDER" in keys
-    # no secrets committed
-    assert "DESLOP_SECRET_KEY" in keys
+    # every documented variable must map to a real setting
+    fields = set(Settings.model_fields)
+    unknown = {k for k in keys if k.removeprefix("DESLOP_").lower() not in fields}
+    assert not unknown, f".env.example has variables Settings does not read: {unknown}"

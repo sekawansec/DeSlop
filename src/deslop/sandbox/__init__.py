@@ -1,17 +1,5 @@
-"""Sandbox: single-use execution environment policy."""
+"""Egress policy enforced by the executor."""
 
-from .policy import (
-    EgressPolicy,
-    SandboxSpec,
-    build_egress_policy,
-    build_sandbox_spec,
-    host_of,
-)
+from .policy import EgressPolicy, build_egress_policy, host_of
 
-__all__ = [
-    "EgressPolicy",
-    "SandboxSpec",
-    "build_egress_policy",
-    "build_sandbox_spec",
-    "host_of",
-]
+__all__ = ["EgressPolicy", "build_egress_policy", "host_of"]
