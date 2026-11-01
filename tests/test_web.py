@@ -5,6 +5,7 @@ from deslop.config.loader import ProgramRegistry
 from deslop.config.settings import Settings, reset_settings_cache
 from deslop.db import Base
 from deslop.db.session import reset_engine
+from deslop.intake.abuse import reset_intake_limiter
 from deslop.web.app import create_app
 from deslop.web.auth import hash_password
 
@@ -20,6 +21,7 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setenv("DESLOP_LLM_PROVIDER", "none")
     reset_settings_cache()
     reset_engine()
+    reset_intake_limiter()
 
     settings = Settings(_env_file=None)
     from deslop.db.session import get_engine
@@ -78,6 +80,55 @@ def test_submit_success_returns_report_id_and_status_url(client):
     payload = r.json()
     assert payload["report_id"].startswith("RPT-")
     assert "status_url" in payload
+
+
+_LAB_SUBMISSION = {
+    "program_id": "lab",
+    "title": "IDOR",
+    "asset": "api.lab.test",
+    "vuln_class": "idor",
+    "body": "1. do a thing",
+    "raw_http": "GET /api/invoices/1001 HTTP/1.1\nHost: api.lab.test",
+    "attestation": "on",
+}
+
+
+def _report_status(report_id):
+    from deslop.db.models import Report
+    from deslop.db.session import session_scope
+
+    with session_scope() as session:
+        return session.get(Report, report_id).status
+
+
+def test_pipeline_failure_does_not_fail_intake_and_reprocess_recovers(client, monkeypatch):
+    from deslop.cli import main
+    from deslop.web import service
+
+    real = service.run_pipeline_for_report
+    broken = {"on": True}
+
+    def flaky(*args, **kwargs):
+        if broken["on"]:
+            raise RuntimeError("boom")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(service, "run_pipeline_for_report", flaky)
+    r = client.post("/submit", data=_LAB_SUBMISSION)
+    assert r.status_code == 201, r.text
+    report_id = r.json()["report_id"]
+    assert _report_status(report_id) == "received"
+
+    broken["on"] = False
+    assert main(["--config-dir", "config/programs", "reprocess"]) == 0
+    assert _report_status(report_id) != "received"
+    assert main(["--config-dir", "config/programs", "reprocess"]) == 0
+
+
+def test_submit_triages_in_background_task(client):
+    r = client.post("/submit", data=_LAB_SUBMISSION)
+    assert r.status_code == 201
+    assert _report_status(r.json()["report_id"]) != "received"
 
 
 def test_poc_video_must_be_youtube(client):

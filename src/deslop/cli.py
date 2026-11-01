@@ -78,16 +78,13 @@ def _cmd_retest(args: argparse.Namespace) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 
-    from .recipes.concrete import register_default_recipes
+    from .recipes.bootstrap import register_recipes_for
 
-    register_default_recipes()
-    if args.program_id == "lab":
-        try:
-            from lab.recipes.lab_recipes import register_lab_recipes
-
-            register_lab_recipes()
-        except ImportError:
-            pass
+    try:
+        register_recipes_for(args.program_id)
+    except ImportError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
 
     init_db(settings)
     try:
@@ -101,6 +98,46 @@ def _cmd_retest(args: argparse.Namespace) -> int:
     if result.evidence:
         print(f"evidence: {result.evidence}")
     return 0 if not result.still_reproducible else 1
+
+
+def _cmd_reprocess(args: argparse.Namespace) -> int:
+    from sqlalchemy import select
+
+    from .config import ProgramRegistry
+    from .db.enums import ReportStatus
+    from .db.models import Report
+    from .db.session import init_db, session_scope
+    from .recipes.bootstrap import register_recipes_for
+    from .web.service import process_report
+
+    settings = get_settings()
+    try:
+        registry = ProgramRegistry.from_dir(args.config_dir or settings.config_dir)
+    except ConfigError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    init_db(settings)
+    with session_scope() as session:
+        stmt = select(Report.id, Report.program_id).where(
+            Report.status == ReportStatus.RECEIVED.value
+        )
+        pending = [(r.id, r.program_id) for r in session.execute(stmt)]
+    if not pending:
+        print("No reports are waiting in 'received'.")
+        return 0
+    failed = 0
+    for report_id, program_id in pending:
+        try:
+            program = registry.get(program_id)
+            register_recipes_for(program_id)
+        except (ConfigError, ImportError) as exc:
+            print(f"{report_id}: skipped ({exc})", file=sys.stderr)
+            failed += 1
+            continue
+        ok = process_report(report_id, program, settings=settings)
+        print(f"{report_id}: {'processed' if ok else 'FAILED (see log)'}")
+        failed += not ok
+    return 1 if failed else 0
 
 
 def _cmd_init(args: argparse.Namespace) -> int:
@@ -189,13 +226,13 @@ def _cmd_eval(args: argparse.Namespace) -> int:
     else:
         reports = generate_dataset(seed=args.seed, per_category=args.per)
 
-    if args.program_id == "lab":
-        try:
-            from lab.recipes.lab_recipes import register_lab_recipes
+    from .recipes.bootstrap import register_recipes_for
 
-            register_lab_recipes()
-        except ImportError:
-            pass
+    try:
+        register_recipes_for(args.program_id)
+    except ImportError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
 
     result = evaluate(reports, program, settings)
     print(to_markdown([result]))
@@ -204,7 +241,7 @@ def _cmd_eval(args: argparse.Namespace) -> int:
     print(f"false_reproduced: {result.metrics.false_reproduced} (target: 0)")
     for label in sorted(result.per_label):
         row = result.per_label[label]
-        print(f"  {label}: {row['total']}")
+        print(f"  {label}: {row['correct']}/{row['total']} routed as expected")
     if result.metrics.injection_block_rate < 1.0:
         print("WARNING: some injection attempts were not blocked")
     if result.metrics.false_reproduced > 0:
@@ -268,6 +305,11 @@ def build_parser() -> argparse.ArgumentParser:
     demo.add_argument("--per", type=int, default=None)
     demo.add_argument("--program", default="lab", help="program id to demo (lab or dvwa)")
 
+    sub.add_parser(
+        "reprocess",
+        help="run the pipeline for reports still in 'received' (e.g. after a restart)",
+    )
+
     retest = sub.add_parser("retest", help="re-run reproduction after a fix")
     retest.add_argument("program_id")
     retest.add_argument("report_id")
@@ -309,6 +351,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_demo(args)
     if args.command == "retest":
         return _cmd_retest(args)
+    if args.command == "reprocess":
+        return _cmd_reprocess(args)
     parser.print_help()
     return 0
 

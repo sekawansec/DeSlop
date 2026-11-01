@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, Form, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from ..config.loader import ProgramRegistry
@@ -17,7 +17,7 @@ from ..db.session import session_scope
 from ..intake.abuse import get_blacklist, get_intake_limiter
 from .app import templates
 from .http import wants_html
-from .service import create_report, run_pipeline_for_report
+from .service import create_report, process_report
 
 router = APIRouter()
 
@@ -77,6 +77,7 @@ def _submit_error(
 @router.post("/submit")
 def submit(
     request: Request,
+    background_tasks: BackgroundTasks,
     program_id: str = Form(...),
     title: str = Form(...),
     asset: str = Form(...),
@@ -184,15 +185,12 @@ def submit(
                 token=token, token_hash="", expires_at=report.status_token_expires_at
             ).status_url(base)
             payload["status_url"] = status_url
-        # Run the pipeline (parse -> validate -> reproduce -> verify -> route) so
-        # the report is triaged immediately. Internal routing/verdict are never
-        # returned to the researcher — they only get the public status page.
-        try:
-            run_pipeline_for_report(session, report, program)
-        except Exception as exc:  # noqa: BLE001 - never fail intake on pipeline error
-            import logging
 
-            logging.getLogger("deslop.web").warning("pipeline run failed: %s", exc)
+    # The report is committed; triage (parse -> validate -> reproduce -> verify
+    # -> route) runs after the response so a slow reproduction never holds the
+    # request open. Internal routing/verdict are never returned to the
+    # researcher — they only get the public status page.
+    background_tasks.add_task(process_report, report.id, program, settings=settings)
 
     if wants_html(request):
         return templates.TemplateResponse(

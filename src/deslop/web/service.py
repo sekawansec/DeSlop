@@ -6,6 +6,7 @@ public status only ever changes on an explicit human decision.
 
 from __future__ import annotations
 
+import logging
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -17,6 +18,7 @@ from ..config.schema import ProgramConfig
 from ..config.settings import Settings
 from ..db.enums import Decision, MessageDirection, PublicStatus, ReportStatus
 from ..db.models import Message, Report, TriageResult
+from ..db.session import session_scope
 from . import audit
 from .status_token import issue_token, token_is_valid
 
@@ -351,12 +353,33 @@ def run_pipeline_for_report(
     )
 
 
+def process_report(
+    report_id: str, program: ProgramConfig, *, settings: Settings | None = None
+) -> bool:
+    """Run the pipeline for a stored report in its own transaction.
+
+    Used as a background task after intake and by ``deslop reprocess``. Never
+    raises: on failure the transaction is rolled back and the report stays as
+    it was (``received``). Returns whether the run completed.
+    """
+    try:
+        with session_scope() as session:
+            report = session.get(Report, report_id)
+            if report is None:
+                return False
+            run_pipeline_for_report(session, report, program, settings=settings)
+        return True
+    except Exception:  # noqa: BLE001 - intake must not depend on the pipeline
+        logging.getLogger("deslop.web").exception("pipeline run failed for %s", report_id)
+        return False
+
+
 def _draft_reply(program: ProgramConfig, result) -> str | None:  # noqa: ANN001
     """Draft the researcher reply for outcomes that need human follow-up.
 
-    For ``needs_info`` the draft bundles the missing fields plus
-    challenge-response questions only someone who actually ran the exploit can
-    answer. Uses the program's reply template when configured.
+    For ``needs_info`` the draft lists the missing fields and the evidence
+    checklist items the report failed to demonstrate. Uses the program's reply
+    template when configured.
     """
     if result.routing is None:
         return None
