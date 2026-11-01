@@ -4,13 +4,17 @@
 {% block content %}
 <hgroup>
   <h1>Researcher guide</h1>
-  <p>Every report is replayed against the target. Prose is never accepted as proof.</p>
+  <p>Every report is replayed against the program's staging environment.
+     Prose is never accepted as proof.</p>
 </hgroup>
 
 <section>
   <h2>The rule</h2>
-  <p>Don't tell us it's a bug — show us. Your report is replayed verbatim, so write
-     steps and requests we can execute exactly as given.</p>
+  <p>Don't tell us it's a bug — show us. Your raw requests are replayed verbatim
+     against staging, with your cookies and tokens replaced by the program's own
+     validator accounts. A deterministic verifier then checks whether the claimed
+     effect actually happened. If it can't be reproduced, your report goes to a
+     human — unproven, not auto-rejected.</p>
 </section>
 
 <section>
@@ -18,11 +22,11 @@
   <table>
     <thead><tr><th>Bug class</th><th>Proof required</th></tr></thead>
     <tbody>
-      <tr><td class="mono">idor</td><td>Two accounts. Show the victim's object fetched with the attacker's credentials — both raw requests and responses.</td></tr>
-      <tr><td class="mono">xss_reflected<br>xss_stored</td><td>Exact payload with a unique marker, plus proof it executed: screenshot, console output, or <code>document.domain</code>. For stored XSS, include where it renders.</td></tr>
-      <tr><td class="mono">ssrf</td><td>An out-of-band callback the server actually fetched (interactsh, Burp Collaborator, or similar).</td></tr>
-      <tr><td class="mono">open_redirect</td><td>The redirect parameter and the external destination in the <code>Location</code> header.</td></tr>
-      <tr><td class="mono">command_injection</td><td>The executed command and its output in the response — e.g. <code>id</code>, <code>whoami</code>, <code>/etc/passwd</code> contents.</td></tr>
+      <tr><td class="mono">idor</td><td>Show access to <em>another account's</em> data: the attacker session must receive a response containing data that belongs to the victim. Two accounts, both raw requests and responses.</td></tr>
+      <tr><td class="mono">xss_reflected<br>xss_stored</td><td>The exact payload including a unique marker that your script writes to <code>document.title</code> — e.g. <code>&lt;script&gt;document.title='MY_UNIQUE_MARKER'&lt;/script&gt;</code>. Payloads like <code>alert(1)</code> can't be verified automatically and go to manual review. For stored XSS, include both the store and the view requests.</td></tr>
+      <tr><td class="mono">ssrf</td><td>An out-of-band callback address the server actually fetched. Use a <code>&lt;token&gt;.oob.test</code> host or a public callback service (interactsh <code>oast.*</code>, Burp Collaborator, oastify.com) — it is redirected to our own listener during replay.</td></tr>
+      <tr><td class="mono">open_redirect</td><td>The redirect parameter with an external destination. During replay we swap your destination for our own marker domain, so the app must genuinely follow the parameter.</td></tr>
+      <tr><td class="mono">command_injection</td><td>The executed command and its output in the response — e.g. the output of <code>id</code>. Output that simply echoes your payload text doesn't count.</td></tr>
       <tr><td class="mono muted">other classes</td><td class="muted">Reviewed manually — include a runnable PoC.</td></tr>
     </tbody>
   </table>
@@ -34,10 +38,13 @@
   <pre>1. Log in as the attacker account (session cookie below)
 2. GET the victim's object: /api/profile/alice
 3. Response contains Alice's private fields, not Bob's</pre>
-  <p><strong>Raw request</strong> — the exact bytes:</p>
+  <p><strong>Raw request</strong> — the exact bytes, including the <code>Host</code>
+     header and the attacker's session:</p>
   <pre>GET /api/profile/alice HTTP/1.1
 Host: api.example.com
 Cookie: session=attacker-session-here</pre>
+  <p>Screenshots and console logs help the human triager, but they are not proof:
+     only the replayed request and its response decide the verdict.</p>
 </section>
 
 <section>

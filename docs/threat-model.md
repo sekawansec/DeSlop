@@ -16,7 +16,7 @@
 - **Sloppy / low-effort submitter** - floods the queue with non-reproducible
   AI-written reports.
 - **Opportunistic attacker** - targets the DeSlop deployment itself (dashboard
-  auth, status page, sandbox escape).
+  auth, status page, setup wizard).
 
 ## Mitigations
 
@@ -35,12 +35,15 @@ blocked outright. In addition, the executor enforces the egress allowlist on
 every single request, so even a substituted plan cannot reach an unlisted host.
 
 ### Blind exfiltration and SSRF pivots
-The sandbox is a single-use container with egress restricted at the network level
-to in-scope staging hosts and the self-hosted OOB listener; the same policy is
-enforced in-process by the executor. SSRF proof requires a per-run callback token
-generated at `recipe.setup()` time and embedded into the plan by the substitution
-layer — a hit the listener never saw cannot be claimed. All other connections
-are blocked.
+The executor enforces an egress allowlist in-process: staging hosts and the
+self-hosted OOB listener are reachable, in-scope production hosts need approval,
+everything else is refused before the request is made. Redirects are not
+followed. **There is no container or network-level isolation behind this**, and
+the check compares hostnames rather than resolved addresses, so a hostile DNS
+record for an allowed name is not defended against; restrict what the host can
+reach at the network level if that matters to you. SSRF proof requires a per-run
+callback token generated at `recipe.setup()` time and embedded into the plan by
+the substitution layer — a hit the listener never saw cannot be claimed.
 
 ### Credential leakage
 Test-account credentials are substituted at execution time and redacted from logs
@@ -59,8 +62,10 @@ Every reproduction request carries an `X-Bounty-User: deslop-repro-<run_id>`
 header (configurable) so target-side logs can correlate test traffic.
 
 ### Unauthorized dashboard access
-HTTP Basic auth backed by a PBKDF2 password hash. Every decision is written to the
-audit log.
+HTTP Basic auth backed by a PBKDF2 password hash, so it must be served over
+HTTPS (see the Caddy profile). Every decision is written to the audit log. The
+first-run setup wizard is unauthenticated by necessity; it refuses all requests
+once setup is complete or a dashboard password hash is configured.
 
 ### Status-page data leakage
 The page shows only public fields. Internal statuses, evidence, repro logs, and

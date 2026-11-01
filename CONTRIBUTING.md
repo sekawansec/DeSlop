@@ -9,8 +9,9 @@ security teams only review evidence-backed submissions.
   that improvise or try alternative approaches.
 - Verifiers must be **deterministic** and read only technical evidence. An LLM
   must never decide whether a bug is proven.
-- Report content is untrusted input. Never execute it outside the sandbox, and
-  never write credentials to logs or evidence packs.
+- Report content is untrusted input. Never send a request that bypasses the
+  executor's egress policy, and never write credentials to logs or evidence
+  packs.
 - Generic by default: no company names, scopes, or rules hardcoded. Use config.
 
 ## Development
@@ -81,13 +82,12 @@ this), and a **deterministic verifier**. Recipes live in
 - [ ] Never writes secrets to evidence.
 - [ ] Has a false-positive test.
 
-## Writing an intake adapter
+## Intake adapters
 
-Adapters translate an external source into a `Report` and the pipeline entry
-point. Provide an `intake(program, payload) -> Report` function. Stubs (email,
-GitHub Private Vulnerability Reporting) live in `src/deslop/intake/`. An adapter
-must collect the mandatory evidence fields (raw HTTP request, HAR, or runnable
-PoC) or reject the submission at intake.
+Intake today is the web form/API in `src/deslop/web/` — there are no email or
+GitHub adapters yet. If you add one, it must collect the mandatory evidence
+fields (raw HTTP request, HAR, or runnable PoC) or reject the submission at
+intake.
 
 ## Pull requests
 

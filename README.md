@@ -1,251 +1,330 @@
 # DeSlop
 
-**A self-hosted gatekeeper for self-managed Vulnerability Disclosure Programs (VDP) and bug bounty programs.**
+DeSlop is a self-hosted filter for self-managed VDP and bug bounty programs.
 
-DeSlop helps security teams survive the flood of AI-generated "slop" reports. It
-filters, deduplicates, and — most importantly — *reproduces* incoming reports so
-that a human only reviews submissions that already come with evidence.
+It exists because LLMs made it nearly free to produce vulnerability reports
+that *look* plausible but don't actually reproduce, and a human still has to
+read all of them. DeSlop puts the friction back at intake, then replays each
+report against your staging environment so a triager mostly sees submissions
+that already come with proof.
 
-> DeSlop makes **recommendations**. Final decisions (accept, reject, bounty)
-> always belong to a human.
+Two things it will not do: reject a report on its own (a report that fails
+reproduction is deprioritized, never closed), and decide anything with an LLM
+(whether a bug is proven is always decided by deterministic code looking at
+recorded traffic).
 
 
-## The problem
+## How a report moves through it
 
-Self-managed VDP programs drown in low-quality reports. LLMs make it cheap to
-produce convincing-looking writeups that do not actually reproduce. Human
-triagers burn out. DeSlop adds friction at intake and proof at triage: every
-accepted-looking report is replayed against a staging environment, and a
-deterministic verifier decides whether the bug is real.
+1. **Intake** — the submission form (`/submit`) requires reproduction steps
+   plus at least one artifact: a raw HTTP request, a HAR file, or a runnable
+   PoC. It also requires a self-reproduction attestation and offers an
+   optional AI-assistance disclosure and YouTube PoC link. A deterministic
+   per-class checklist (SSRF wants an OOB callback, IDOR wants two accounts)
+   turns missing pieces into follow-up questions.
+2. **Filtering** — scope checks, excluded classes, prompt-injection scan,
+   duplicate detection against existing reports (lexical similarity of
+   title, class and endpoint — not a semantic model, see Known gaps).
+3. **Parsing** — an LLM (or the offline raw-HTTP parser when no LLM is
+   configured) turns the report into a locked list of steps. Nothing
+   improvises later; reproduction runs exactly what the report claims.
+4. **Validation** — deterministic policy checks. Out-of-scope or destructive
+   steps are blocked before a single request is sent.
+5. **Execution** — the locked steps are sent by the web app process itself,
+   which refuses any host outside the program's egress allowlist. There is
+   no container or network isolation around it (see Known gaps). Plans that
+   point at in-scope *production* hosts stop at `needs_human_review` until a
+   triager records `approve_production`.
+6. **Verification** — a per-bug-class verifier reads the recorded
+   request/response log (and the OOB listener, for blind bugs) and returns
+   `proven`, `not_proven`, `inconclusive`, or `error`.
+7. **Triage** — reports land in queues on the dashboard (`/dashboard`). A
+   human decides. After a fix, the report can be retested.
 
-## Core principles
+The split that matters: the LLM parser only ever sees untrusted report text
+and produces JSON — it has no execution access. The executor never sees raw
+report text — it only runs locked steps. The verifier only sees technical
+evidence.
 
-- Recommendations and evidence, never automatic rejection. A report that fails
-  reproduction is **deprioritized**, never closed.
-- Reproduction is **locked** to the steps written in the report. No improvising,
-  no alternative approaches.
-- Proof comes from **deterministic per-bug-class verifiers**, never from an LLM's
-  judgment.
-- Self-hosted and privacy-first: runs fully locally with no outbound calls
-  required (`llm_provider=none`, local `bge-m3` embeddings).
-- Generic: no company names, scopes, or rules hardcoded. Everything is config.
-- Not a full VDP platform. It filters and reproduces; it does not do researcher
-  accounts, long threads, or disclosure management.
 
-## How it works
+## Running it
 
-```mermaid
-flowchart LR
-    A[Intake: evidence + attestation required] --> B[Filtering: scope, excluded, injection, dedup]
-    B --> C[Parsing: LLM to locked steps]
-    C --> D[Validator: deterministic policy]
-    D -->|reject| X[blocked_by_policy]
-    D -->|ok| S[Recipe setup: tokens, markers, reset]
-    S --> E{Egress gate}
-    E -->|production, unapproved| HR[needs_human_review]
-    E -->|allowed| F[Executor: sandbox, staging]
-    F --> G[Verifier: per bug class]
-    G --> H[Routing: categorize + queue]
-    H --> I[Triage dashboard: human decides]
-    I --> J[Retest after a fix]
-```
-
-Key separations:
-
-- The **parser** (LLM) reads untrusted report text and produces structured JSON.
-  It has no execution access.
-- The **validator** is deterministic code. It rejects out-of-scope or destructive
-  steps before anything runs.
-- The **executor** never reads raw report text; it only runs locked steps.
-- The **verifier** decides `proven` / `not_proven` / `inconclusive` / `error` from
-  technical evidence only.
-
-## Quickstart
+Needs Docker + Docker Compose. Python 3.12 if you want the CLI locally.
 
 ```bash
-pip install -e .                 # or: pip install -r requirements.txt
-docker compose up -d             # Postgres + pgvector, web app, OOB listener
+docker compose up -d
 ```
 
-Then open **http://localhost:8000** — a first-run **setup wizard** appears. It
-creates your admin account, your first program, and writes the config. Nothing to
-edit by hand.
+That brings up Postgres (with pgvector), the web app on
+http://localhost:8000, and the OOB listener on http://localhost:8080.
 
-Prefer the CLI?
+On first run, every page redirects to `/setup` — a wizard that creates the
+admin account, writes your first program config, and stores LLM/OOB settings.
+No manual file editing required.
+
+The wizard has no login (there is no admin yet), so it shuts itself off once
+it finishes: afterwards `/setup` returns 403. To run it again, remove the
+saved state and restart:
 
 ```bash
-deslop init                      # generate .env with secrets + dashboard password
+docker compose exec web rm /app/data/setup.json /app/data/setup.env
+docker compose restart web
 ```
 
-For the intentionally vulnerable lab targets:
+If you'd rather generate `.env` yourself, install the CLI first:
 
 ```bash
-docker compose -f lab/docker-compose.yml up -d
+pip install -e .
+deslop init        # writes .env with secrets + a dashboard password
 ```
 
-### HTTPS (optional)
+(Just `pip install -r requirements.txt` gives you the dependencies but not
+the `deslop` command.)
+
+The dashboard uses HTTP Basic auth, so run it behind HTTPS (below) anywhere
+other than your own machine.
+
+The Docker image ships with Chromium, which XSS and open-redirect
+verification need. If you run the app on the host instead, install it once:
 
 ```bash
-DESLOP_DOMAIN=vdp.example.com docker compose --profile https up -d
+python -m playwright install chromium
 ```
 
-Caddy obtains and renews a Let's Encrypt certificate automatically. See
-`deploy/`.
+### HTTPS
 
-## CLI
+The Caddy reverse proxy lives in a separate compose file:
+
+```bash
+DESLOP_DOMAIN=vdp.example.com \
+  docker compose -f docker-compose.yml -f deploy/docker-compose.https.yml \
+  --profile https up -d
+```
+
+Caddy gets and renews the Let's Encrypt cert itself. For local testing use
+`DESLOP_DOMAIN=localhost`.
+
+
+## Configuring a program
+
+Everything program-specific is a YAML file — scope, excluded bug classes,
+the staging host map, test accounts, bounty table, reply templates,
+`allowed_egress_hosts`, `allow_production`, `canary`,
+`evidence_requirements`. Copy `config/programs/example-acme-cloud.yaml` and
+edit it; the `id` field inside the file is the program's identity.
+
+Where the files go depends on how you run:
+
+- **docker compose**: `config/container/` (the container mounts `./config`
+  and reads `DESLOP_CONFIG_DIR=/app/config/container`)
+- **local CLI / `deslop serve`**: `./config/programs` (or `--config-dir`)
+
+The setup wizard writes to whichever directory the running app uses. New
+program files in both directories are gitignored — only the shipped example
+and lab configs stay in the repo.
+
+Environment variables (`DESLOP_*`) cover the rest — database URL, LLM
+provider, execution limits, SMTP, notifications. See `.env.example`. The LLM
+provider is your choice: `anthropic`, `openai` (any OpenAI-compatible
+endpoint), `ollama`, or `none`. With `none` the pipeline makes no LLM calls
+and stays fully local; reports then need a raw HTTP request or HAR to be
+reproduced, because only the offline parser is available.
+
+
+## Using it day to day
+
+- Researchers submit at `/submit` and can check `/status/<token>` later if
+  the status page is enabled.
+- Triagers work out of `/dashboard`: queues by status, report detail with
+  the evidence pack, decisions, replies, retest buttons. Roles are `admin`,
+  `triager`, `readonly` (extra users via `DESLOP_DASHBOARD_USERS_JSON`;
+  read-only accounts see no mutating actions).
+- `/dashboard/cvss?vector=...` is an exact CVSS v3.1 calculator. The score
+  suggested on each report is only a heuristic starting point (keywords in
+  the report, then a typical-impact baseline per bug class) and is labelled
+  that way; the triager sets the real rating.
+- Slack webhook and/or Telegram bot notifications on new reports and status
+  changes (`DESLOP_NOTIFY_ENABLED`, `DESLOP_SLACK_WEBHOOK_URL`, ...).
+- Per-IP submission rate limiting and an email/IP blacklist with temporary
+  blocks (`data/blacklist.json`).
+
+CLI:
 
 ```bash
 deslop init                                     # generate .env (secrets + dashboard password)
-deslop config list                              # list configured programs
-deslop config show acme-cloud                   # print a program's config
-deslop dataset generate --out data/ds.jsonl     # synthetic eval dataset
-deslop doctor lab                               # environment readiness checklist
-deslop eval lab                                 # run the eval harness
-deslop demo --program dvwa                      # sort a mixed batch (Arsenal demo)
-deslop serve --init-db                           # web app: form, status page, dashboard
+deslop config list                              # list loaded programs
+deslop config show acme-cloud                   # dump one program's config as JSON
+deslop doctor lab                               # preflight checklist (informational; the pipeline does not wait for it)
+deslop eval lab                                 # run the eval harness against a synthetic dataset
+deslop dataset generate --out data/ds.jsonl     # write that dataset to disk
+deslop demo --program dvwa                      # feed a mixed batch through the pipeline (lab or dvwa)
+deslop serve --init-db                          # run the web app without Docker
 deslop retest <program> <report_id>             # re-run reproduction after a fix
+deslop reprocess                                # run the pipeline for reports stuck in 'received'
 ```
 
-## Operational features
 
-- **Structured intake** — the submission form requires reproduction steps plus
-  at least one technical artifact (raw HTTP request, HAR, or PoC), a
-  self-reproduction attestation, and an optional AI-assistance disclosure. A
-  deterministic per-class evidence checklist (e.g. SSRF → OOB callback, IDOR →
-  two accounts) turns gaps into follow-up questions for the researcher.
-- **Production gate** — plans targeting in-scope production hosts (not mapped to
-  staging) stop at `needs_human_review` until a triager records
-  `approve_production`; nothing is sent before that.
-- **Program canary** — plant a unique token in staging and mark bug classes that
-  should surface it; a missing canary is flagged to the reviewer.
-- **First-run setup wizard** — configure admin account, first program, and
-  model/listener from the browser. No manual `.env` editing.
-- **One-command CLI setup** — `deslop init` writes a `.env` with strong secrets.
-- **Modern, minimalist UI** — clean triage dashboard, submission form, and status
-  page (server-rendered, no build step).
-- **Notifications** — Slack webhook and/or Telegram bot on new reports and status
-  changes (`DESLOP_NOTIFY_ENABLED`, `DESLOP_SLACK_WEBHOOK_URL`, ...).
-- **Intake anti-abuse** — per-IP submission rate limiting and an email/IP
-  blacklist with temporary blocks (`data/blacklist.json`), on top of the evidence
-  requirement that already filters slop.
-- **Deterministic CVSS v3.1** — an exact calculator that runs in the pipeline and
-  is exposed at `/dashboard/cvss?vector=...`, as a second opinion to any LLM
-  suggestion.
-- **Multi-user dashboard** — roles `admin`, `triager`, `readonly` via
-  `DESLOP_DASHBOARD_USERS_JSON`; read-only accounts see no mutating actions.
-- **HTTPS** — optional Caddy profile with automatic Let's Encrypt certificates.
-- **Logging** — plain or JSON logs, with size-based rotation (`DESLOP_LOG_FILE`).
-
-## Configuration
-
-- **Environment** (`DESLOP_*`, see `.env.example`): database URL, LLM/embedding
-  provider, sandbox limits, SMTP, OOB listener. The LLM provider is your choice:
-  `anthropic`, `openai` (any OpenAI-compatible endpoint), `ollama` (local), or
-  `none`.
-- **Per-program YAML** (`config/programs/*.yaml`): scope, excluded classes,
-  staging host map, test accounts, bounty table, reply templates, status-page
-  settings, `allowed_egress_hosts`, `allow_production`, `canary`, and
-  `evidence_requirements`. Scope and egress entries accept URLs or
-  `*.domain` globs — they are normalized to host patterns at load
-  (`*.example.com` covers subdomains only; list the apex as a separate
-  `domain` entry). See `config/programs/example-acme-cloud.yaml`.
-
-## Recipes and verifiers (v1)
+## What it can actually prove (v1)
 
 | Bug class | Proof criterion |
 |---|---|
-| IDOR | An object owned by account A appears, with its owner-specific data, in a response returned to account B. |
-| XSS (reflected/stored) | The payload's unique marker actually executes in a headless browser. |
-| SSRF | A callback carrying a unique per-run token reaches the self-hosted OOB listener. |
-| Open redirect | The browser, or a 3xx `Location`, points at the marker domain. |
-| OS command injection | The response contains the output of an executed OS command (e.g. `id`). |
+| IDOR | A secret owned by account A (its `owned_markers` in the program config) appears in a successful response returned to account B's session — or to an unauthenticated request. The report's own claimed marker is never used as proof. |
+| XSS (reflected/stored) | The payload's unique marker appears in `document.title` after the page loads in a headless browser. A marker that is merely reflected — including safely escaped output — is not proof. |
+| SSRF | A callback carrying a unique per-run token reaches the OOB listener. `*.oob.test`, interactsh `oast.*`, `interact.sh`, `burpcollaborator.net`, and `oastify.com` hosts are rewritten to the program's own listener. |
+| Open redirect | The report's external redirect target is rewritten to DeSlop's own marker domain (`marker.deslop.test`) before replay; the 3xx `Location` or the browser must land there. A redirect to a host the report merely named is not proof. |
+| OS command injection | The response contains real command output (e.g. `uid=... gid=...` from `id`) that was not present in the request — reflected payload text is not proof. |
 
-Bug classes without a recipe are routed to `manual_reproduction_required`. See
-`CONTRIBUTING.md` to add one.
+Bug classes without a recipe get routed to `manual_reproduction_required`.
+See `CONTRIBUTING.md` for how to write one.
 
-## Lab targets
+Two deployment requirements for automatic proof:
 
-`lab/docker-compose.yml` brings up intentionally vulnerable targets:
+- **IDOR** needs trusted ownership data: fill `owned_markers` on
+  `test_accounts` (and `canary.owner` if you plant a canary) so the verifier
+  can tell whose data a response contains. Without them, IDOR verdicts stay
+  `inconclusive` — deliberately.
+- **SSRF** needs the OOB listener (`DESLOP_OOB_BASE_URL`) to be reachable
+  *from the staging environment*, since staging is what makes the callback.
+  The verifier queries the same URL, so it must also work for DeSlop itself.
 
-- **custom-app** (18000): IDOR, reflected/stored XSS, SSRF, open redirect.
-- **DVWA** (14000): MariaDB-backed, security level `low`; reflected XSS and OS
-  command injection. Config in `config/programs/dvwa.yaml`.
-- **OWASP Juice Shop** (13000).
-- **OOB listener** (18080) for blind bugs.
+Optionally, plant a `canary` token in staging and mark the bug classes that
+should surface it; a report that never shows the canary gets flagged to the
+reviewer.
+
+
+## Lab
+
+`lab/docker-compose.yml` brings up intentionally vulnerable targets — keep
+them on an isolated network:
+
+- **custom-app** on :18000 — IDOR, reflected/stored XSS, SSRF, open redirect
+- **DVWA** on :14000 — MariaDB-backed, security level `low`
+- **OWASP Juice Shop** on :13000
+- **OOB listener** on :18080
 
 ```bash
 docker compose -f lab/docker-compose.yml up -d
-deslop demo --program dvwa     # proves DVWA XSS + command injection
+deslop demo --program dvwa     # proves DVWA reflected XSS + command injection
 ```
 
-## Eval results
+See `lab/README.md` for accounts and the planted bugs.
 
-Run against the intentionally vulnerable lab, synthetic dataset (`seed=1337`,
-local models, no LLM):
 
+## Eval numbers (synthetic)
+
+`deslop eval lab` pushes a generated dataset (`seed=1337`, 37 reports) through
+the pipeline against the lab app with no LLM. It needs Chromium for the
+XSS/open-redirect checks (`python -m playwright install chromium`) and an OOB
+URL that both the verifier and the lab containers can reach — the lab-network
+gateway address works because the OOB port is published on the host:
+
+```bash
+docker compose -f lab/docker-compose.yml up -d lab-app oob
+export DESLOP_OOB_BASE_URL="http://$(docker network inspect deslop-lab_lab --format '{{(index .IPAM.Config 0).Gateway}}'):18080"
+deslop eval lab
 ```
+
 | Provider | Routing acc. | Repro rate | False reproduced | Dup precision | Dup recall | Injection blocked |
 |----------|--------------|------------|------------------|---------------|------------|-------------------|
-| none     | 70.27%       | 40.00%     | 0                | 100.00%       | 100.00%    | 3/3               |
-```
+| none     | 100.00%      | 100.00%    | 0                | 100.00%       | 100.00%    | 3/3               |
 
-- **False reproduced: 0** — the safety target. No non-reproducible report was
-  ever marked proven.
-- **Injection blocked: 3/3** — every prompt-injection attempt was caught and
-  routed to human review.
-- `repro rate` is capped here by the offline parser (client-side XSS and
-  token-based SSRF need the LLM parser or a live browser); it rises with a real
-  model configured.
+| Report label | Routed as expected |
+|---|---|
+| duplicate | 15/15 |
+| excluded_class | 3/3 |
+| incomplete | 3/3 |
+| injection | 3/3 |
+| out_of_scope | 3/3 |
+| slop | 5/5 |
+| valid | 5/5 |
 
-`deslop eval` exports this table as markdown for the README.
+How to read this:
 
-## Layout
+- The dataset is generated from templates written by the same person who
+  wrote the pipeline. Treat it as a regression check, not as evidence of
+  accuracy on real reports. Nobody has measured that yet.
+- The 15 duplicate rows are scored by the harness's own retrieval step, not by
+  `pipeline.run()` (the pipeline is given no corpus during eval), so that row
+  is optimistic.
+- Samples are tiny (5 valid, 5 slop). `False reproduced: 0` only says none of
+  the 32 non-valid reports was marked proven.
+- These numbers were measured with an LLM provider of `none` (the offline
+  raw-HTTP parser). How they change with an LLM configured has not been
+  measured.
+
+
+## Repo layout
 
 ```
 src/deslop/
-  config/     settings + per-program YAML schema and loader
-  db/         SQLAlchemy models (pgvector on Postgres, JSON on SQLite)
-  llm/        provider abstraction, embeddings, prompts, validated client
-  parser/     LLM step parser + offline raw-HTTP parser
-  repro/      step model, scope, validator, substitution, web executor
-  intake/     per-class evidence checklist (deterministic gap detection)
-  recipes/    recipe/verifier plugins (IDOR, XSS, SSRF, open redirect)
-  pipeline/   orchestrator, filters, routing, retest
-  dedup/      normalization, retrieval, judgement
-  eval/       metrics + eval runner
-  web/        FastAPI app: submission form, status page, triage dashboard
-  oob/        self-hosted out-of-band listener
-lab/          intentionally vulnerable targets (custom app, Juice Shop, OOB)
-config/       example program configs
-docs/         architecture, setup, threat model
+  cli.py        argparse CLI: init, config, doctor, eval, demo, serve, retest
+  config/       settings + per-program YAML schema and loader
+  db/           SQLAlchemy models (pgvector on Postgres, JSON on SQLite)
+  llm/          provider abstraction, embeddings, prompts
+  parser/       LLM step parser + offline raw-HTTP parser
+  repro/        step model, scope, validator, substitution, web executor
+  sandbox/      egress policy (host allowlist; no container isolation)
+  security/     prompt-injection scanning
+  intake/       evidence checklist, rate limiting, blacklist
+  recipes/      recipe/verifier plugins (IDOR, XSS, SSRF, open redirect, cmdinj)
+  pipeline/     orchestrator, filters, routing, retest
+  dedup/        normalization, retrieval, judgement
+  eval/         metrics + eval runner
+  dataset/      synthetic dataset generator
+  web/          FastAPI app: submit form, status page, setup wizard, dashboard
+  oob/          self-hosted out-of-band listener
+lab/            intentionally vulnerable targets (custom app, DVWA, Juice Shop, OOB)
+config/         program configs (programs/ for local, container/ for compose)
+deploy/         Caddy HTTPS compose file
+docs/           architecture, setup, threat model
 ```
 
-## Security model
 
-Report content is **untrusted input**. It is delimited in prompts, treated as
-data, and scanned for prompt injection. The sandbox is a single-use container
-with egress restricted to in-scope staging hosts and the OOB listener — the same
-allowlist is enforced per-request by the executor. Credentials
-are redacted from logs and evidence packs. Reproduction against in-scope
-production hosts requires explicit approval (env flag, program flag, or a
-per-report `approve_production` decision) and is gated before any request is
-sent. See `docs/threat-model.md`.
+## Security notes
 
-## Limitations
+Report content is untrusted input: it is delimited in prompts, scanned for
+prompt injection, and the executor only ever runs the locked steps. The
+executor refuses any host outside the program's egress allowlist before each
+request, credentials are redacted from logs and evidence packs, and
+production reproduction requires explicit approval before anything is sent.
+The threat model is in `docs/threat-model.md`.
 
-- v1 ships only the web executor. Mobile/desktop executors are interface stubs.
-- Verifiers are only as good as their proof criteria; a bug with no recipe is
-  never auto-proven.
-- The offline parser (no LLM) is conservative and will under-reproduce
-  client-side bugs; configure an LLM for full coverage.
-- DeSlop is **not** a full VDP platform.
+## Known gaps
+
+Things that are easy to assume from the description but are not true yet:
+
+- **No container or network isolation.** Requests derived from a report are
+  sent by the web app process itself. The egress allowlist compares
+  hostnames, not resolved addresses, so it does not protect against a
+  hostile DNS record for an allowed name. Run it somewhere where that
+  process can only reach what you are happy for it to reach.
+- **Duplicate detection is lexical.** It compares hashed tokens of title,
+  class and endpoint. The `DESLOP_EMBEDDING_PROVIDER` / `DESLOP_EMBEDDING_MODEL`
+  settings (default `bge-m3`) exist, but the live pipeline does not use them
+  and `sentence-transformers` is not a dependency.
+- **`deslop doctor` is advisory.** Nothing in the pipeline waits for it. Its
+  egress check also reports NOT READY on any host that has internet access.
+- **Triage runs as an in-process background task, not a queue.** `POST /submit`
+  stores the report and answers immediately; the pipeline runs afterwards in
+  the web process. If the process stops mid-run, that report stays in
+  `received`. `deslop reprocess` runs the pipeline for everything still in
+  `received`; run it when the app is idle, because a report that is being
+  processed right now also still shows as `received`.
+- **Suggested CVSS is a heuristic**, not a rating.
+- The offline parser (no LLM) is conservative and under-reproduces.
+- Only the web executor exists; mobile/desktop executors are interface stubs.
+- A bug class with no recipe is never auto-proven.
+- Not a full VDP platform: no researcher accounts, no long discussion
+  threads, no disclosure workflow.
+
 
 ## Liability
 
-This tool executes HTTP requests and drives a headless browser against targets
-you configure. **Only use it against infrastructure you own or are explicitly
-authorized to test.** You are responsible for how you deploy it.
+This tool sends HTTP requests and drives a headless browser against targets
+you configure. Only point it at infrastructure you own or are explicitly
+authorized to test.
+
 
 ## License
 
-Placeholder — to be finalized as Apache-2.0 or AGPL-3.0. See `LICENSE`.
+Apache License 2.0 — see `LICENSE` and `NOTICE`.
