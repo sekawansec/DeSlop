@@ -14,17 +14,29 @@ import re
 from pathlib import Path
 
 import yaml
-from fastapi import APIRouter, Form, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi import APIRouter, Form, HTTPException, Request
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from ..config.loader import ConfigError, load_program_file
 from ..config.settings import get_settings
 from ..db.session import init_db, make_engine
 from .app import templates
 from .auth import hash_password
-from .setup_state import load_state, mark_complete
+from .setup_state import is_setup_complete, load_state, mark_complete
 
 router = APIRouter()
+
+
+def _ensure_setup_open(request: Request) -> None:
+    """Refuse wizard actions once setup is done.
+
+    The wizard is unauthenticated by design (there is no admin yet), so after
+    the first run it must stop accepting input — otherwise anyone could reset
+    the dashboard password. To re-run it, delete the setup state file.
+    """
+    if is_setup_complete(request.app.state.settings):
+        raise HTTPException(status_code=403, detail="setup already completed")
+
 
 _PROGRAM_TEMPLATE = {
     "id": "my-program",
@@ -91,7 +103,9 @@ def _write_env_overlay(settings, updates: dict[str, str]) -> Path:  # noqa: ANN0
 
 
 @router.get("/setup", response_class=HTMLResponse)
-def setup_page(request: Request) -> HTMLResponse:
+def setup_page(request: Request) -> Response:
+    if is_setup_complete(request.app.state.settings):
+        return RedirectResponse(url="/dashboard", status_code=303)
     settings = get_settings()
     state = load_state(settings)
     registry = request.app.state.registry
@@ -124,6 +138,7 @@ def run_setup(
     enable_status_page: str | None = Form(None),
     overwrite_program: str | None = Form(None),
 ) -> RedirectResponse:
+    _ensure_setup_open(request)
     settings = request.app.state.settings
     notes: list[str] = []
 
@@ -222,8 +237,9 @@ def setup_done(request: Request) -> HTMLResponse:
 
 
 @router.get("/setup/db-check")
-def db_check() -> dict:
+def db_check(request: Request) -> dict:
     """Lightweight connectivity probe the wizard calls to validate the database."""
+    _ensure_setup_open(request)
     settings = get_settings()
     try:
         engine = make_engine(settings)

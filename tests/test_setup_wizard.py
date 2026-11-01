@@ -140,6 +140,50 @@ def test_setup_state_persisted(tmp_path, monkeypatch):
     reset_settings_cache()
 
 
+_SETUP_FORM = {
+    "admin_user": "admin",
+    "admin_password": "supersecret",
+    "program_name": "P",
+    "program_id": "p",
+    "in_scope": "p.test",
+    "staging_base_url": "https://s.p.test",
+    "llm_provider": "none",
+    "oob_base_url": "http://oob:8080",
+}
+
+
+def test_setup_cannot_be_rerun_after_completion(tmp_path, monkeypatch):
+    settings = _settings(tmp_path, monkeypatch)
+    (tmp_path / "programs").mkdir(exist_ok=True)
+    app = create_app(settings, ProgramRegistry.from_dir(settings.config_dir))
+    with TestClient(app) as c:
+        assert c.post("/setup", data=_SETUP_FORM, follow_redirects=False).status_code == 303
+        original_hash = app.state.settings.dashboard_password_hash
+
+        hijack = dict(_SETUP_FORM, admin_user="attacker", admin_password="pwned-pwned")
+        r = c.post("/setup", data=hijack, follow_redirects=False)
+        assert r.status_code == 403
+        assert app.state.settings.dashboard_password_hash == original_hash
+        assert app.state.settings.dashboard_user == "admin"
+
+        assert c.get("/setup/db-check").status_code == 403
+        page = c.get("/setup", follow_redirects=False)
+        assert page.status_code == 303
+        assert page.headers["location"] == "/dashboard"
+    reset_engine()
+    reset_settings_cache()
+
+
+def test_setup_closed_when_hash_preconfigured(tmp_path, monkeypatch):
+    settings = _settings(tmp_path, monkeypatch, with_hash=True)
+    (tmp_path / "programs").mkdir(exist_ok=True)
+    app = create_app(settings, ProgramRegistry.from_dir(settings.config_dir))
+    with TestClient(app) as c:
+        assert c.post("/setup", data=_SETUP_FORM, follow_redirects=False).status_code == 403
+    reset_engine()
+    reset_settings_cache()
+
+
 def test_is_setup_complete_true_when_hash_set(tmp_path, monkeypatch):
     settings = _settings(tmp_path, monkeypatch, with_hash=True)
     assert is_setup_complete(settings) is True
