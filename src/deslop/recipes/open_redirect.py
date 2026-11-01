@@ -7,6 +7,12 @@ deterministic proof in two forms:
   (server-side redirect), or
 * the browser's final URL after navigation lands on the marker domain
   (client-side redirect).
+
+The marker domain is DeSlop's own (``marker.deslop.test``), never a host named
+in the report: the substitution layer rewrites the report's external redirect
+target to it before replay. A redirect to a host the report merely *named*
+(an SSO provider the app always redirects to, say) proves nothing; landing on
+a domain only the replayed parameter could have produced does.
 """
 
 from __future__ import annotations
@@ -31,12 +37,6 @@ class OpenRedirectVerifier:
         self.marker_host = marker_host.lower()
         self._browser = browser
 
-    def _marker(self, plan) -> str:  # noqa: ANN001
-        for step in plan.steps:
-            if step.expectation and step.expectation.marker:
-                return step.expectation.marker
-        return self.marker_host
-
     def verify(self, plan, execution: ExecutionResult, program: ProgramConfig) -> VerificationResult:  # noqa: ANN001
         if not execution.completed:
             return VerificationResult(
@@ -45,8 +45,7 @@ class OpenRedirectVerifier:
                 "execution did not complete",
             )
 
-        marker = self._marker(plan)
-        marker_host = _host_of(marker) or self.marker_host
+        marker_host = self.marker_host
 
         # 1) Server-side redirect via Location header.
         saw_location = False

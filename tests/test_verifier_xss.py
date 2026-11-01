@@ -1,3 +1,4 @@
+from deslop.recipes.browser import markers_in_title
 from deslop.recipes.xss import ReflectedXssVerifier, StoredXssVerifier
 from deslop.repro.interfaces import ExecutionResult, StepResult
 from deslop.repro.steps import ReproPlanModel, ReproStep, StepExpectation, StructuredRequest
@@ -73,4 +74,21 @@ def test_stored_xss_proven(fake_browser, program):
 def test_xss_not_proven_on_incomplete_execution(fake_browser, program):
     fake_browser(markers=[MARKER])
     result = ReflectedXssVerifier().verify(_plan(), _exec("x", failed=0), program)
+    assert result.verdict == "not_proven"
+
+
+def test_marker_in_body_does_not_count_as_execution():
+    """A marker in the served HTML may be an escaped reflection — only the
+    document title counts."""
+    body_marker = markers_in_title("Search results", [MARKER])
+    assert MARKER not in body_marker
+    assert markers_in_title(f"Results for {MARKER}", [MARKER]) == {MARKER}
+
+
+def test_escaped_reflection_is_not_proven(fake_browser, program):
+    """Endpoint reflects the marker but HTML-escapes it (safe): the browser
+    observes no execution marker, so the claim stays unproven."""
+    fake_browser(markers=[], final_url="http://staging/lab/search?q=x")
+    escaped = f"<p>Results for: &lt;script&gt;document.title='{MARKER}'&lt;/script&gt;</p>"
+    result = ReflectedXssVerifier().verify(_plan(), _exec(escaped), program)
     assert result.verdict == "not_proven"

@@ -15,6 +15,11 @@ out_of_scope:
   - kind: domain
     value: "blog.lab.test"
 
+excluded_classes:
+  - id: missing-security-headers
+    match: ["missing header", "security headers"]
+    reason: "Not accepted without a demonstrated exploit."
+
 staging:
   base_url: "http://127.0.0.1:18000"
   host_map:
@@ -24,22 +29,28 @@ staging:
     url: "http://127.0.0.1:18000/__test__/reset"
     method: "POST"
 
+# owned_markers: secrets that only appear in this account's own data on
+# staging. The IDOR verifier proves a claim only when a marker owned by one
+# account shows up in a response returned to another (or unauthenticated).
 test_accounts:
   - id: user_a
     role: user
     tenant: tenant-one
     username: "alice"
     password: "alice-pass"
+    owned_markers: ["ACME-INVOICE-ALICE-1001"]
   - id: user_b
     role: user
     tenant: tenant-one
     username: "bob"
     password: "bob-pass"
+    owned_markers: ["ACME-INVOICE-BOB-1002"]
   - id: user_c_other_tenant
     role: user
     tenant: tenant-two
     username: "carol"
     password: "carol-pass"
+    owned_markers: ["ACME-INVOICE-CAROL-1003"]
   - id: admin_a
     role: admin
     tenant: tenant-one
@@ -58,12 +69,13 @@ duplicates:
   candidate_count: 10
   similarity_threshold: 0.80
 
-# Canary planted in the lab app (profile of user alice). For IDOR-class claims
-# the token is added to the verifier's ownership markers, and reports that never
-# surface it get a reviewer note.
+# Canary planted in the lab app (profile of user alice, i.e. user_a). The
+# owner field lets the IDOR verifier treat the token as victim-owned proof;
+# reports that never surface it get a reviewer note.
 canary:
   enabled: true
   token: "CANARY-LAB-D3SL0P-7f2a"
+  owner: user_a
   required_for: ["idor"]
 
 bounty:

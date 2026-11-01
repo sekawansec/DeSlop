@@ -59,6 +59,24 @@ def test_open_redirect_not_proven_via_browser(fake_browser, program):
     assert result.verdict == "not_proven"
 
 
+def test_open_redirect_ignores_marker_named_by_report(program):
+    """A report naming the host the app always redirects to (e.g. its SSO)
+    must not turn a normal redirect into proof."""
+    plan = ReproPlanModel(
+        bug_class="open_redirect",
+        steps=[
+            ReproStep(
+                index=0,
+                description="login redirect",
+                request=StructuredRequest(url="http://staging/login?next=https://sso.example.org/"),
+                expectation=StepExpectation(marker="https://sso.example.org/"),
+            )
+        ],
+    )
+    result = OpenRedirectVerifier().verify(plan, _exec(302, "https://sso.example.org/"), program)
+    assert result.verdict == "not_proven"
+
+
 def test_open_redirect_not_proven_on_incomplete(program):
     execution = _exec(302, MARKER_URL)
     execution.failed_step_index = 0

@@ -72,16 +72,22 @@ test_accounts:
     tenant: tenant-one
     username: "validator.a@acme-cloud.test"
     password: "REPLACE_ME_A"
+    # Secrets that appear only in this account's own data on staging. The IDOR
+    # verifier proves a claim only when a marker owned by another account
+    # appears in a response to this account's session (or unauthenticated).
+    owned_markers: ["REPLACE_ME_USER_A_SECRET"]
   - id: user_b
     role: user
     tenant: tenant-one
     username: "validator.b@acme-cloud.test"
     password: "REPLACE_ME_B"
+    owned_markers: ["REPLACE_ME_USER_B_SECRET"]
   - id: user_c_other_tenant
     role: user
     tenant: tenant-two
     username: "validator.c@acme-cloud.test"
     password: "REPLACE_ME_C"
+    owned_markers: ["REPLACE_ME_USER_C_SECRET"]
   - id: admin_a
     role: admin
     tenant: tenant-one
@@ -163,11 +169,14 @@ allowed_egress_hosts:
 # (approve_production). Keep false unless you mean it.
 allow_production: false
 
-# Optional: a unique token planted in staging. Claims in `required_for`
-# classes that never surface it get a reviewer note (never auto-rejected).
+# Optional: a unique token planted in staging inside the `owner` account's
+# data. Claims in `required_for` classes that never surface it get a reviewer
+# note (never auto-rejected); with `owner` set, the IDOR verifier also treats
+# it as victim-owned proof.
 # canary:
 #   enabled: true
 #   token: "CANARY-ACME-<random>"
+#   owner: user_a
 #   required_for: ["idor", "lfi"]
 
 # Optional: extra intake evidence checks per bug class

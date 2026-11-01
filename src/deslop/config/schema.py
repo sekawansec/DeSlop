@@ -114,6 +114,15 @@ class TestAccount(BaseModel):
     username: str
     password: str = Field("", repr=False)
     otp_secret: str | None = Field(None, repr=False, description="TOTP seed for staging OTP")
+    owned_markers: list[str] = Field(
+        default_factory=list,
+        description=(
+            "secrets only this account's data should contain on staging "
+            "(e.g. an invoice token). IDOR proof requires a marker owned by a "
+            "different account to appear in a response; without these, IDOR "
+            "verdicts stay inconclusive."
+        ),
+    )
 
 
 class LoginConfig(BaseModel):
@@ -236,6 +245,14 @@ class CanaryConfig(BaseModel):
 
     enabled: bool = False
     token: str = Field("", description="unique secret planted in staging, e.g. CANARY-<random>")
+    owner: str | None = Field(
+        None,
+        description=(
+            "test-account id whose data contains the canary. Required for the "
+            "IDOR verifier to treat the canary as victim-owned proof; without "
+            "an owner the canary only feeds the reviewer note."
+        ),
+    )
     required_for: list[str] = Field(
         default_factory=list,
         description="bug classes where the canary is the expected proof (e.g. idor, lfi)",

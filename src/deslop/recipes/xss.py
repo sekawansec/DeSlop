@@ -1,9 +1,10 @@
 """XSS verifiers (reflected and stored).
 
 Proof: the payload actually executes in a headless browser, demonstrated by a
-unique marker being observed (e.g. a marker the script writes to the page title
-or body). Reflected XSS is observed directly from the response URL; stored XSS
-navigates to the view where the persisted payload renders.
+unique marker appearing in ``document.title`` after load. A marker reflected
+in the HTML body — including safely escaped output — is not proof. Reflected
+XSS is observed directly from the response URL; stored XSS navigates to the
+view where the persisted payload renders.
 """
 
 from __future__ import annotations

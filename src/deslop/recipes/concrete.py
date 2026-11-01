@@ -13,30 +13,22 @@ from dataclasses import dataclass, field
 
 from ..config.schema import ProgramConfig
 from ..repro.interfaces import ExecutionResult, VerificationResult
+from ..repro.substitution import REDIRECT_MARKER_HOST
 from .registry import BaseRecipe, SetupResult, register_recipe
-
-
-def _setup_markers(setup_data: dict | None, base: list[str]) -> list[str]:
-    markers = list(base)
-    if setup_data:
-        markers.extend(m for m in setup_data.get("markers", []) if m)
-        canary = setup_data.get("canary")
-        if canary:
-            markers.append(canary)
-    # De-duplicate, preserve order.
-    return list(dict.fromkeys(markers))
 
 
 @dataclass
 class IdorRecipe(BaseRecipe):
     bug_class: str = "idor"
-    owner_markers: list[str] = field(default_factory=list)
+    # Extra ownership markers keyed by owning test-account id. The verifier
+    # also reads test_accounts[].owned_markers and an owned canary from the
+    # program config itself.
+    owner_markers: dict[str, list[str]] = field(default_factory=dict)
 
     def setup(self, program: ProgramConfig, *, run_id: str) -> SetupResult:
-        markers = list(self.owner_markers)
-        if program.canary and program.canary.enabled and program.canary.token:
-            markers.append(program.canary.token)
-        return SetupResult(ok=True, detail="default setup", data={"markers": markers})
+        return SetupResult(
+            ok=True, detail="default setup", data={"owner_markers": dict(self.owner_markers)}
+        )
 
     def verify(
         self,
@@ -48,8 +40,10 @@ class IdorRecipe(BaseRecipe):
     ) -> VerificationResult:  # noqa: ANN001
         from .idor import IdorVerifier
 
-        markers = _setup_markers(setup_data, self.owner_markers)
-        return IdorVerifier(markers).verify(plan, execution, program)
+        owner_markers = {k: list(v) for k, v in self.owner_markers.items()}
+        for owner, markers in ((setup_data or {}).get("owner_markers") or {}).items():
+            owner_markers.setdefault(owner, []).extend(markers)
+        return IdorVerifier(owner_markers).verify(plan, execution, program)
 
 
 @dataclass
@@ -115,7 +109,7 @@ class SsrfRecipe(BaseRecipe):
 @dataclass
 class OpenRedirectRecipe(BaseRecipe):
     bug_class: str = "open_redirect"
-    marker_host: str = "marker.deslop.test"
+    marker_host: str = REDIRECT_MARKER_HOST
 
     def verify(
         self,

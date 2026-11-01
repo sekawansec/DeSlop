@@ -27,9 +27,9 @@ from deslop.web.auth import hash_password
 
 
 def test_scope_entry_coerces_url_glob_to_wildcard():
-    entry = ScopeEntry(kind="domain", value="https://*.forusec.com/*")
+    entry = ScopeEntry(kind="domain", value="https://*.example-target.com/*")
     assert entry.kind == "wildcard"
-    assert entry.value == "*.forusec.com"
+    assert entry.value == "*.example-target.com"
 
 
 def test_scope_entry_coerces_url_to_domain():

@@ -24,6 +24,17 @@ class BrowserObservation:
     error: str | None = None
 
 
+def markers_in_title(title: str, expected_markers: list[str]) -> set[str]:
+    """The only channel that counts as payload execution: the page title.
+
+    A marker that merely appears in the served HTML (``page.content()``) may be
+    an *escaped* reflection — safe output, not a bug. Payloads are required to
+    write a unique marker to ``document.title``, so title membership is the
+    strict execution signal.
+    """
+    return {m for m in expected_markers if m and m in title}
+
+
 @runtime_checkable
 class Browser(Protocol):
     def observe(self, url: str, *, expected_markers: list[str], headless: bool = True) -> BrowserObservation: ...
@@ -52,12 +63,7 @@ class PlaywrightBrowser:
                 page.wait_for_timeout(300)
                 obs.final_url = page.url
                 obs.navigation_urls = [page.url]
-                title = page.title()
-                content = page.content()
-                for marker in expected_markers:
-                    if marker in title or marker in content:
-                        obs.executed_markers.add(marker)
-                # Also check whether any script set a known marker on window.
+                obs.executed_markers = markers_in_title(page.title(), expected_markers)
                 browser.close()
         except Exception as exc:  # noqa: BLE001 - reported as observation error
             obs.error = f"{type(exc).__name__}: {exc}"

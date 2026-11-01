@@ -1,5 +1,6 @@
 from deslop.config.schema import (
     ProgramConfig,
+    ScopeEntry,
     StagingConfig,
     TestAccount,
 )
@@ -83,6 +84,83 @@ def test_step_order_and_count_preserved():
         "https://staging.demo.test/b",
         "https://staging.demo.test/c",
     ]
+
+
+def test_host_rewrite_uses_staging_scheme():
+    """Staging is authoritative for the scheme — an http:// raw request must
+    land on https staging, not silently downgrade."""
+    plan = ReproPlanModel(bug_class="idor", steps=[_step(0, "http://app.demo.test/api/x")])
+    result = apply_substitutions(plan, PROGRAM)
+    assert result.steps[0].request.url == "https://staging.demo.test/api/x"
+
+
+def test_oob_test_host_rewritten_to_listener():
+    url = "http://app.demo.test/api/fetch?url=http://abc123.oob.test/ping"
+    plan = ReproPlanModel(bug_class="ssrf", steps=[_step(0, url)])
+    result = apply_substitutions(
+        plan, PROGRAM, oob_base_url="http://127.0.0.1:18080", run_token="RUNTOKEN"
+    )
+    out = result.steps[0].request.url
+    assert "127.0.0.1:18080/cb/RUNTOKEN" in out
+    assert "oob.test" not in out
+
+
+def test_known_oob_services_rewritten_to_listener():
+    """interactsh / Burp Collaborator style callbacks are redirected to the
+    program's own OOB listener — never contacted for real."""
+    for host in ("x1.oast.fun", "x1.interact.sh", "x1.burpcollaborator.net", "x1.oastify.com"):
+        url = f"http://app.demo.test/api/fetch?url=http://{host}/"
+        plan = ReproPlanModel(bug_class="ssrf", steps=[_step(0, url)])
+        result = apply_substitutions(
+            plan, PROGRAM, oob_base_url="http://127.0.0.1:18080", run_token="RUNTOKEN"
+        )
+        out = result.steps[0].request.url
+        assert "127.0.0.1:18080/cb/RUNTOKEN" in out, (host, out)
+        assert host not in out
+        assert any(s.kind == "oob_host" for s in result.substitutions)
+
+
+def test_non_oob_host_not_rewritten():
+    url = "http://app.demo.test/api/fetch?url=http://attacker.example.com/"
+    plan = ReproPlanModel(bug_class="ssrf", steps=[_step(0, url)])
+    result = apply_substitutions(plan, PROGRAM, oob_base_url="http://127.0.0.1:18080")
+    assert "attacker.example.com" in result.steps[0].request.url
+
+
+def test_open_redirect_target_pointed_at_marker_domain():
+    for url, expected in (
+        (
+            "https://app.demo.test/redirect?next=https://evil.example/landing",
+            "https://staging.demo.test/redirect?next=https://marker.deslop.test/landing",
+        ),
+        (
+            "https://app.demo.test/r?a=1&url=https%3A%2F%2Fevil.example%2Fx",
+            "https://staging.demo.test/r?a=1&url=https%3A%2F%2Fmarker.deslop.test%2Fx",
+        ),
+        (
+            "https://app.demo.test/r?to=//evil.example/p",
+            "https://staging.demo.test/r?to=https://marker.deslop.test/p",
+        ),
+    ):
+        plan = ReproPlanModel(bug_class="open_redirect", steps=[_step(0, url)])
+        result = apply_substitutions(plan, PROGRAM)
+        assert result.steps[0].request.url == expected, url
+        assert any(s.kind == "redirect_target" for s in result.substitutions)
+
+
+def test_redirect_rewrite_only_for_open_redirect_and_external_hosts():
+    url = "https://app.demo.test/redirect?next=https://evil.example/landing"
+    plan = ReproPlanModel(bug_class="ssrf", steps=[_step(0, url)])
+    assert "evil.example" in apply_substitutions(plan, PROGRAM).steps[0].request.url
+
+    program = PROGRAM.model_copy(
+        update={"in_scope": [ScopeEntry(kind="domain", value="demo.test")]}
+    )
+    url = "https://app.demo.test/redirect?next=https://app.demo.test/home"
+    plan = ReproPlanModel(bug_class="open_redirect", steps=[_step(0, url)])
+    assert apply_substitutions(plan, program).steps[0].request.url.endswith(
+        "next=https://app.demo.test/home"
+    )
 
 
 def test_payload_and_query_untouched():

@@ -88,8 +88,20 @@ def _program(base: str) -> ProgramConfig:
             },
         ),
         test_accounts=[
-            TestAccount(id="user_a", role="user", username="alice", password="alice-pass"),
-            TestAccount(id="user_b", role="user", username="bob", password="bob-pass"),
+            TestAccount(
+                id="user_a",
+                role="user",
+                username="alice",
+                password="alice-pass",
+                owned_markers=["ACME-INVOICE-ALICE-1001"],
+            ),
+            TestAccount(
+                id="user_b",
+                role="user",
+                username="bob",
+                password="bob-pass",
+                owned_markers=["ACME-INVOICE-BOB-1002"],
+            ),
         ],
         login=LoginConfig(
             kind="form",

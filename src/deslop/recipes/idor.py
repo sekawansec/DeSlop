@@ -1,12 +1,13 @@
 """IDOR verifier.
 
-Proof: account B successfully reads or modifies an object owned by account A,
-demonstrated by account A's *specific* data appearing in B's response.
+Proof: a response returned to account X (or to an unauthenticated request)
+contains a secret owned by account Y — where ownership comes from trusted
+program configuration, never from the report.
 
-The verifier never trusts the report's claim. It requires a known ownership
-marker (the object's owner secret, supplied by the recipe setup or read from the
-program's expectations) to appear verbatim in a response returned to a
-*different* account's session.
+Markers are taken from ``test_accounts[].owned_markers`` and from a canary
+with an ``owner`` set. The report's own claimed marker
+(``step.expectation.marker``) is never used: it is untrusted researcher input
+and proves nothing.
 """
 
 from __future__ import annotations
@@ -20,11 +21,21 @@ from .common import last_response, status_of
 class IdorVerifier:
     bug_class = "idor"
 
-    def __init__(self, owner_markers: list[str] | None = None) -> None:
-        # Markers are the concrete secrets belonging to the victim accounts.
-        # They are provided by the recipe setup (e.g. read from the lab) or,
-        # for real programs, from the expected object data in the plan.
-        self.owner_markers = owner_markers or []
+    def __init__(self, owner_markers: dict[str, list[str]] | None = None) -> None:
+        # Extra markers supplied by recipe setup, keyed by owning account id.
+        self.extra_owner_markers = owner_markers or {}
+
+    def _owner_map(self, program: ProgramConfig) -> dict[str, list[str]]:
+        owners: dict[str, list[str]] = {}
+        for acct in program.test_accounts:
+            if acct.owned_markers:
+                owners.setdefault(acct.id, []).extend(acct.owned_markers)
+        canary = program.canary
+        if canary and canary.enabled and canary.token and canary.owner:
+            owners.setdefault(canary.owner, []).append(canary.token)
+        for owner, markers in self.extra_owner_markers.items():
+            owners.setdefault(owner, []).extend(markers)
+        return {k: list(dict.fromkeys(v)) for k, v in owners.items()}
 
     def verify(
         self, plan, execution: ExecutionResult, program: ProgramConfig
@@ -36,50 +47,53 @@ class IdorVerifier:
                 "execution did not complete",
             )
 
-        # Determine the attacker account (the one making the access request) and
-        # the victim markers we must not see unless access control is broken.
-        requested_marker = None
-        for step in plan.steps:
-            if step.expectation and step.expectation.marker:
-                requested_marker = step.expectation.marker
-                break
-
-        markers = list(self.owner_markers)
-        if requested_marker and requested_marker not in markers:
-            markers.append(requested_marker)
-
-        if not markers:
+        owner_map = self._owner_map(program)
+        if not owner_map:
             return VerificationResult(
                 Verdict.INCONCLUSIVE,
-                {"reason": "no ownership marker available to prove cross-account access"},
-                "no ownership marker available",
+                {
+                    "reason": "no owned_markers configured on test accounts "
+                    "(or a canary without an owner); cross-account access "
+                    "cannot be proven automatically"
+                },
+                "no trusted ownership markers configured",
             )
 
-        for marker in markers:
-            for step in execution.step_results:
-                if step.response is None:
+        steps_by_index = {s.index: s for s in plan.steps}
+        for step in execution.step_results:
+            if step.response is None:
+                continue
+            status = status_of(step)
+            if status is None or status >= 400:
+                continue
+            plan_step = steps_by_index.get(step.index)
+            requester = plan_step.as_account if plan_step else None
+            body = step.response.get("body", "")
+            for owner, markers in owner_map.items():
+                if requester is not None and owner == requester:
                     continue
-                status = status_of(step)
-                if status is None or status >= 400:
-                    continue
-                body = step.response.get("body", "")
-                if marker and marker in body:
-                    return VerificationResult(
-                        Verdict.PROVEN,
-                        {
-                            "marker": marker,
-                            "step_index": step.index,
-                            "status_code": status,
-                            "snippet": _snippet(body, marker),
-                        },
-                        f"victim-owned marker {marker!r} returned to the requesting session",
-                    )
+                for marker in markers:
+                    if marker and marker in body:
+                        who = requester or "unauthenticated request"
+                        return VerificationResult(
+                            Verdict.PROVEN,
+                            {
+                                "marker": marker,
+                                "owner": owner,
+                                "requester": requester,
+                                "step_index": step.index,
+                                "status_code": status,
+                                "snippet": _snippet(body, marker),
+                            },
+                            f"marker owned by {owner!r} returned to {who}",
+                        )
 
         last = last_response(execution)
         return VerificationResult(
             Verdict.NOT_PROVEN,
             {
-                "reason": "no victim-owned marker appeared in any successful response",
+                "reason": "no marker owned by a different account appeared in "
+                "any successful response",
                 "last_status": status_of(last) if last else None,
             },
             "no cross-account data observed",

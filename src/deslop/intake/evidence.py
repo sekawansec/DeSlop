@@ -103,24 +103,24 @@ _CHECKS = {
         (
             "marker",
             _has_marker,
-            "Include the exact payload with a unique marker and a screenshot or "
-            "log line proving it executed (e.g. document.domain).",
+            "Include the exact payload with a unique marker your script writes "
+            "to document.title (e.g. document.title='MY_UNIQUE_MARKER').",
         ),
     ],
     "xss_stored": [
         (
             "marker",
             _has_marker,
-            "Include the stored payload with a unique marker and where it "
-            "renders; a screenshot/log showing execution is required.",
+            "Include the stored payload with a unique document.title marker, "
+            "plus both the store and view requests.",
         ),
     ],
     "ssrf": [
         (
             "oob_callback",
             _has_oob,
-            "Provide an out-of-band callback address (e.g. <token>.oob.test) "
-            "that the server actually fetched.",
+            "Provide an out-of-band callback address (<token>.oob.test, or an "
+            "interactsh/Collaborator/oastify host) the server actually fetched.",
         ),
     ],
     "open_redirect": [

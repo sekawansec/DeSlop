@@ -39,8 +39,7 @@ _INSTRUCTION_OVERRIDE = [
     r"forget\s+(everything|all|your)\s+(you|previous|prior|instructions?)",
     r"you\s+are\s+now\s+(a|an)\b",
     r"new\s+instructions?\s*:",
-    r"\bsystem\s*:\s*",
-    r"\bassistant\s*:\s*",
+    r"\b(system|assistant)\s*:\s*(you|ignore|disregard|forget|act|from\s+now|override)\b",
     r"do\s+not\s+treat\s+this\s+as\s+data",
     r"override\s+(the\s+)?(validator|policy|rules|scope)",
     r"(validator|policy|filter|guardrails?)\s+(has\s+been\s+)?(disabled|bypassed|turned\s+off)",
@@ -98,6 +97,17 @@ def _fetch_target_host(text: str, match: re.Match) -> str | None:
     return (urlparse(m.group(0)).hostname or "").lower()
 
 
+def _allowed_fetch_host(host: str, in_scope) -> bool:  # noqa: ANN001
+    """A fetch target is legitimate when it is in scope or a known OOB callback
+    host — SSRF reports are expected to name a callback address, and the
+    substitution layer rewrites it to the program's own listener anyway."""
+    from ..repro.substitution import is_known_oob_host
+
+    if in_scope is not None and in_scope(host):
+        return True
+    return is_known_oob_host(host)
+
+
 def detect_injection(
     text: str,
     *,
@@ -118,7 +128,7 @@ def detect_injection(
             cat = category
             if cat == "scoped_fetch":
                 host = _fetch_target_host(text, match)
-                if host and in_scope is not None and in_scope(host):
+                if host and _allowed_fetch_host(host, in_scope):
                     continue
                 cat = "forced_fetch"
             findings.append(
@@ -132,7 +142,7 @@ def detect_injection(
                 cat = category
                 if cat == "scoped_fetch":
                     host = _fetch_target_host(comment, match)
-                    if host and in_scope is not None and in_scope(host):
+                    if host and _allowed_fetch_host(host, in_scope):
                         continue
                     cat = "forced_fetch"
                 findings.append(

@@ -2,8 +2,8 @@
 
 This test boots the real lab FastAPI app and OOB listener in-process on random
 ports, builds locked plans, executes them with the real WebExecutor, and runs
-each verifier. It proves the whole Stage 3+4 chain works against real bugs — not
-just mocks.
+each verifier. It proves the execute-then-verify chain works against real bugs —
+not just mocks.
 
 Skipped automatically if dependencies for the in-process servers are missing.
 """
@@ -86,8 +86,20 @@ def _program(base: str) -> ProgramConfig:
         in_scope=[ScopeEntry(kind="domain", value="127.0.0.1")],
         staging=StagingConfig(base_url=base),
         test_accounts=[
-            TestAccount(id="user_a", role="user", username="alice", password="alice-pass"),
-            TestAccount(id="user_b", role="user", username="bob", password="bob-pass"),
+            TestAccount(
+                id="user_a",
+                role="user",
+                username="alice",
+                password="alice-pass",
+                owned_markers=["ACME-INVOICE-ALICE-1001"],
+            ),
+            TestAccount(
+                id="user_b",
+                role="user",
+                username="bob",
+                password="bob-pass",
+                owned_markers=["ACME-INVOICE-BOB-1002"],
+            ),
         ],
         login=LoginConfig(
             kind="form",
@@ -157,9 +169,10 @@ def test_idor_end_to_end(lab_env):
     execution = _run(plan, program, oob)
     from deslop.recipes.idor import IdorVerifier
 
-    verification = IdorVerifier(["ACME-INVOICE-ALICE-1001"]).verify(plan, execution, program)
+    verification = IdorVerifier().verify(plan, execution, program)
     assert verification.verdict == Verdict.PROVEN
     assert verification.evidence["marker"] == "ACME-INVOICE-ALICE-1001"
+    assert verification.evidence["requester"] == "user_b"
 
 
 def test_idor_not_proven_for_own_invoice(lab_env):
@@ -170,8 +183,8 @@ def test_idor_not_proven_for_own_invoice(lab_env):
         steps=[
             ReproStep(
                 index=0,
-                description="alice reads bob's invoice",
-                request=StructuredRequest(url=f"{base}/api/invoices/1002"),
+                description="alice reads her own invoice",
+                request=StructuredRequest(url=f"{base}/api/invoices/1001"),
                 as_account="user_a",
             )
         ],
@@ -179,9 +192,8 @@ def test_idor_not_proven_for_own_invoice(lab_env):
     execution = _run(plan, program, oob)
     from deslop.recipes.idor import IdorVerifier
 
-    # Alice reading Bob's invoice *is* an IDOR in the lab; verify the marker logic
-    # by looking only for Carol's marker, which should NOT be present.
-    verification = IdorVerifier(["ACME-INVOICE-CAROL-1003"]).verify(plan, execution, program)
+    # Alice's own marker in Alice's own session is not cross-account access.
+    verification = IdorVerifier().verify(plan, execution, program)
     assert verification.verdict == Verdict.NOT_PROVEN
 
 
